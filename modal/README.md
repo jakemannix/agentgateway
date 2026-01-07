@@ -5,10 +5,16 @@ Deploy agentgateway as a serverless container on [Modal](https://modal.com), pro
 ## Prerequisites
 
 1. **Modal account**: Sign up at [modal.com](https://modal.com)
-2. **Modal CLI**: Install with `pip install modal`
-3. **Authenticate**: Run `modal token new` to authenticate
+2. **uv**: Install from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
+3. **Authenticate**: Run `uv run modal token new` to authenticate
 
 ## Quick Start
+
+```bash
+# From the modal/ directory, sync dependencies
+cd modal
+uv sync
+```
 
 ### Option 1: Build from Source (Recommended for Development)
 
@@ -16,10 +22,10 @@ This option builds agentgateway from the project's Dockerfile:
 
 ```bash
 # Deploy to Modal
-modal deploy modal/modal_app.py
+uv run modal deploy modal_app.py
 
 # Or serve locally for testing
-modal serve modal/modal_app.py
+uv run modal serve modal_app.py
 ```
 
 ### Option 2: Use Pre-built Image (Faster Deployment)
@@ -28,7 +34,7 @@ This option uses a pre-built container image from the registry:
 
 ```bash
 # Deploy using pre-built image
-modal deploy modal/modal_app_prebuilt.py
+uv run modal deploy modal_app_prebuilt.py
 ```
 
 ## Configuration
@@ -37,11 +43,11 @@ Agentgateway is configured via Modal Secrets. Create a secret with your configur
 
 ```bash
 # Create secret from a config file
-modal secret create agentgateway-config \
+uv run modal secret create agentgateway-config \
     AGENTGATEWAY_CONFIG="$(cat your-config.yaml)"
 
 # Or create secret with inline config
-modal secret create agentgateway-config \
+uv run modal secret create agentgateway-config \
     AGENTGATEWAY_CONFIG='
 binds:
 - port: 3000
@@ -110,7 +116,7 @@ Modal automatically scales based on incoming requests. Configure scaling behavio
 
 ```bash
 # Serve the app locally (proxied through Modal)
-modal serve modal/modal_app.py
+uv run modal serve modal_app.py
 
 # Your endpoint will be available at:
 # https://<your-workspace>--agentgateway-serve-dev.modal.run
@@ -120,14 +126,14 @@ modal serve modal/modal_app.py
 
 ```bash
 # Stream logs from your deployment
-modal app logs agentgateway
+uv run modal app logs agentgateway
 ```
 
 ### Updating Secrets
 
 ```bash
 # Update existing secret
-modal secret create agentgateway-config \
+uv run modal secret create agentgateway-config \
     AGENTGATEWAY_CONFIG="$(cat new-config.yaml)" \
     --force
 ```
@@ -175,9 +181,9 @@ modal secret create agentgateway-config \
 
 ### Configuration not applying
 
-1. Verify the secret exists: `modal secret list`
+1. Verify the secret exists: `uv run modal secret list`
 2. Check the secret value: Modal doesn't show secret values, so recreate if unsure
-3. Redeploy after updating secrets: `modal deploy modal/modal_app.py`
+3. Redeploy after updating secrets: `uv run modal deploy modal_app.py`
 
 ## Cost Optimization
 

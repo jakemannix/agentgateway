@@ -1,0 +1,14 @@
+[project]
+name = "agentgateway-modal"
+version = "0.1.0"
+description = "Modal serverless deployment for agentgateway"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "modal>=0.64.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+]
