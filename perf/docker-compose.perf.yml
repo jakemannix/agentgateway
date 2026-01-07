@@ -1,0 +1,146 @@
+# Docker Compose configuration for AgentGateway Performance Testing
+#
+# This compose file allows running performance tests with various hardware
+# configurations to simulate different deployment environments.
+#
+# Usage:
+#   # Run with default settings (4 CPUs, 8GB RAM)
+#   docker-compose -f perf/docker-compose.perf.yml up
+#
+#   # Run with custom hardware
+#   PERF_CPUS=2 PERF_MEMORY=4g docker-compose -f perf/docker-compose.perf.yml up
+#
+#   # Run specific test category
+#   docker-compose -f perf/docker-compose.perf.yml run perf-tests baseline_tests
+#
+#   # Run full production-like tests
+#   docker-compose -f perf/docker-compose.perf.yml --profile production up
+
+version: '3.8'
+
+services:
+  # Standard performance tests (4 CPUs, 8GB RAM)
+  perf-tests:
+    build:
+      context: ..
+      dockerfile: perf/Dockerfile.perf
+    cpus: ${PERF_CPUS:-4}
+    mem_limit: ${PERF_MEMORY:-8g}
+    mem_reservation: ${PERF_MEMORY_RESERVATION:-4g}
+    environment:
+      - PERF_VERIFY=${PERF_VERIFY:-0}
+      - PERF_ITERATIONS=${PERF_ITERATIONS:-1000}
+      - PERF_WARMUP=${PERF_WARMUP:-100}
+      - PERF_CLIENTS=${PERF_CLIENTS:-10}
+      - PERF_LOAD_DURATION_SECS=${PERF_LOAD_DURATION_SECS:-30}
+      - PERF_STABILITY_DURATION_SECS=${PERF_STABILITY_DURATION_SECS:-300}
+      - PERF_JSON_OUTPUT=1
+      - PERF_OUTPUT_PATH=/results/perf-results.json
+      - PERF_CONTAINERIZED=1
+      - PERF_CPUS=${PERF_CPUS:-4}
+      - PERF_MEMORY_BYTES=${PERF_MEMORY_BYTES:-8589934592}
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - ./results:/results
+    networks:
+      - perf-network
+
+  # Minimal/CI configuration (2 CPUs, 4GB RAM)
+  perf-tests-ci:
+    build:
+      context: ..
+      dockerfile: perf/Dockerfile.perf
+    cpus: 2
+    mem_limit: 4g
+    environment:
+      - PERF_VERIFY=0
+      - PERF_ITERATIONS=100
+      - PERF_WARMUP=20
+      - PERF_CLIENTS=5
+      - PERF_LOAD_DURATION_SECS=10
+      - PERF_STABILITY_DURATION_SECS=30
+      - PERF_JSON_OUTPUT=1
+      - PERF_OUTPUT_PATH=/results/perf-results-ci.json
+      - PERF_CONTAINERIZED=1
+      - RUST_LOG=warn
+    volumes:
+      - ./results:/results
+    networks:
+      - perf-network
+    profiles:
+      - ci
+
+  # Production-like configuration (8 CPUs, 16GB RAM)
+  perf-tests-production:
+    build:
+      context: ..
+      dockerfile: perf/Dockerfile.perf
+    cpus: 8
+    mem_limit: 16g
+    mem_reservation: 8g
+    environment:
+      - PERF_VERIFY=0
+      - PERF_ITERATIONS=5000
+      - PERF_WARMUP=500
+      - PERF_CLIENTS=50
+      - PERF_LOAD_DURATION_SECS=120
+      - PERF_STABILITY_DURATION_SECS=3600
+      - PERF_LARGE_PAYLOAD=131072
+      - PERF_XL_PAYLOAD=4194304
+      - PERF_JSON_OUTPUT=1
+      - PERF_OUTPUT_PATH=/results/perf-results-production.json
+      - PERF_CONTAINERIZED=1
+      - RUST_LOG=info
+    volumes:
+      - ./results:/results
+    networks:
+      - perf-network
+    profiles:
+      - production
+
+  # Quick verification tests (1 CPU, 2GB RAM)
+  perf-tests-verify:
+    build:
+      context: ..
+      dockerfile: perf/Dockerfile.perf
+    cpus: 1
+    mem_limit: 2g
+    environment:
+      - PERF_VERIFY=1
+      - PERF_JSON_OUTPUT=1
+      - PERF_OUTPUT_PATH=/results/perf-results-verify.json
+      - PERF_CONTAINERIZED=1
+      - RUST_LOG=warn
+    volumes:
+      - ./results:/results
+    networks:
+      - perf-network
+    profiles:
+      - verify
+
+  # Resource-constrained environment (1 CPU, 1GB RAM)
+  perf-tests-constrained:
+    build:
+      context: ..
+      dockerfile: perf/Dockerfile.perf
+    cpus: 1
+    mem_limit: 1g
+    environment:
+      - PERF_VERIFY=1
+      - PERF_CLIENTS=2
+      - PERF_LARGE_PAYLOAD=32768
+      - PERF_XL_PAYLOAD=65536
+      - PERF_JSON_OUTPUT=1
+      - PERF_OUTPUT_PATH=/results/perf-results-constrained.json
+      - PERF_CONTAINERIZED=1
+      - RUST_LOG=warn
+    volumes:
+      - ./results:/results
+    networks:
+      - perf-network
+    profiles:
+      - constrained
+
+networks:
+  perf-network:
+    driver: bridge

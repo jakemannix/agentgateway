@@ -1,0 +1,74 @@
+# Performance Testing Docker Image for AgentGateway
+#
+# This image is optimized for running performance tests with configurable
+# hardware constraints (CPU, memory) to simulate various deployment scenarios.
+#
+# Build:
+#   docker build -f perf/Dockerfile.perf -t agentgateway-perf .
+#
+# Run with hardware constraints:
+#   docker run --cpus=4 --memory=8g agentgateway-perf
+#
+# Run specific test category:
+#   docker run --cpus=4 --memory=8g agentgateway-perf baseline
+#
+# Run with custom parameters:
+#   docker run -e PERF_ITERATIONS=5000 -e PERF_CLIENTS=50 agentgateway-perf
+
+FROM rust:1.86-bookworm AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Build UI assets
+RUN cd ui && npm install && npm run build && cd ..
+
+# Build release binary with performance tests
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+RUN cargo build --release --tests -p agentgateway
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built artifacts
+COPY --from=builder /app/target/release/deps/perf_tests-* /app/perf_tests
+
+# Make the test binary executable
+RUN chmod +x /app/perf_tests
+
+# Environment variables for performance testing
+ENV PERF_CONTAINERIZED=1
+ENV PERF_JSON_OUTPUT=1
+ENV PERF_OUTPUT_PATH=/results/perf-results.json
+ENV RUST_LOG=info
+
+# Create results directory
+RUN mkdir -p /results
+
+# Default entrypoint runs all performance tests
+ENTRYPOINT ["/app/perf_tests"]
+
+# Default command (can be overridden to run specific tests)
+# Options: all_perf_tests, baseline_tests, virtual_tools_tests, streaming_tests,
+#          failover_tests, load_tests, stability_tests, payload_tests
+CMD ["--test-threads=1", "--nocapture"]
