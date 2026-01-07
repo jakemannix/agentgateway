@@ -35,17 +35,12 @@ app = modal.App(APP_NAME)
 # This uses the existing multi-stage build for optimal image size
 dockerfile_image = modal.Image.from_dockerfile(
     path=Path(__file__).parent.parent / "Dockerfile",
-    context_mount=modal.Mount.from_local_dir(
-        Path(__file__).parent.parent,
-        remote_path="/build-context",
-        # Exclude unnecessary files from build context
-        condition=lambda path: not any(
-            pattern in path
-            for pattern in [".git", "target", "node_modules", ".cargo/registry"]
-        ),
+    context_dir=Path(__file__).parent.parent,
+    # Exclude unnecessary files from build context
+    ignore=lambda path: any(
+        pattern in str(path)
+        for pattern in [".git", "target", "node_modules", ".cargo/registry"]
     ),
-    # Use amd64 for better compatibility with Modal's infrastructure
-    platform="linux/amd64",
 )
 
 # Alternative: Use a pre-built image from a registry
@@ -96,7 +91,7 @@ binds:
 @app.function(
     image=dockerfile_image,
     # Secrets can be created via: modal secret create agentgateway-config AGENTGATEWAY_CONFIG="..."
-    secrets=[modal.Secret.from_name("agentgateway-config", required=False)],
+    secrets=[modal.Secret.from_name("agentgateway-config")],
     # Container configuration
     cpu=1.0,  # Adjust based on your needs
     memory=512,  # MB, adjust based on your needs

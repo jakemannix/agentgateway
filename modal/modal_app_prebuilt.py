@@ -71,7 +71,7 @@ binds:
 
 @app.function(
     image=prebuilt_image,
-    secrets=[modal.Secret.from_name("agentgateway-config", required=False)],
+    secrets=[modal.Secret.from_name("agentgateway-config")],
     cpu=1.0,
     memory=512,
     allow_concurrent_inputs=100,
