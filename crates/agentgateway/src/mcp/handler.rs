@@ -215,6 +215,129 @@ impl Relay {
 				))
 		}
 	}
+
+	/// Invoke a tool on a specific target and return the result as JSON.
+	/// This is used by the composition executor to call backend tools.
+	pub async fn invoke_tool(
+		&self,
+		target: &str,
+		tool_name: &str,
+		args: serde_json::Value,
+		ctx: &IncomingRequestContext,
+	) -> Result<serde_json::Value, UpstreamError> {
+		use futures_util::StreamExt;
+
+		// Get the upstream
+		let upstream = self.upstreams.get(target).map_err(|_| {
+			UpstreamError::InvalidRequest(format!("unknown service {}", target))
+		})?;
+
+		// Build the request
+		let call_params = rmcp::model::CallToolRequestParam {
+			name: tool_name.to_string().into(),
+			arguments: args.as_object().cloned(),
+		};
+
+		let request_id = RequestId::Number(rand::random::<i64>().abs());
+
+		// Create a proper JsonRpcRequest using rmcp's types
+		let call_tool_request = rmcp::model::CallToolRequest {
+			method: Default::default(),
+			params: call_params,
+			extensions: Default::default(),
+		};
+
+		let request: JsonRpcRequest<ClientRequest> = JsonRpcRequest {
+			jsonrpc: Default::default(),
+			id: request_id.clone(),
+			request: ClientRequest::CallToolRequest(call_tool_request),
+		};
+
+		// Send the request and get the response stream
+		let mut stream = upstream.generic_stream(request, ctx).await?;
+
+		// Get the first message from the stream
+		let response = stream.next().await
+			.ok_or_else(|| UpstreamError::InvalidRequest("No response from tool call".to_string()))?
+			.map_err(|e| UpstreamError::InvalidRequest(format!("Tool call error: {}", e)))?;
+
+		// Extract the result from the JSON-RPC response
+		match response {
+			ServerJsonRpcMessage::Response(resp) => {
+				// resp.result is a ServerResult, not a Result<>
+				// Convert ServerResult to JSON
+				let json_result = serde_json::to_value(&resp.result)
+					.map_err(|e| UpstreamError::InvalidRequest(format!("Failed to serialize result: {}", e)))?;
+				Ok(json_result)
+			},
+			ServerJsonRpcMessage::Error(err) => {
+				Err(UpstreamError::InvalidRequest(format!("Tool call failed: {}", err.error.message)))
+			},
+			_ => Err(UpstreamError::InvalidRequest("Unexpected response type from tool call".to_string()))
+		}
+	}
+}
+
+// =============================================================================
+// RelayToolInvoker - Real ToolInvoker implementation using Relay
+// =============================================================================
+
+use crate::mcp::registry::executor::{ExecutionError, ToolInvoker};
+
+/// A ToolInvoker implementation that uses the Relay to make real backend calls.
+/// This is used by the CompositionExecutor to invoke tools during composition execution.
+pub struct RelayToolInvoker {
+	relay: Arc<Relay>,
+	ctx: IncomingRequestContext,
+}
+
+impl RelayToolInvoker {
+	/// Create a new RelayToolInvoker
+	pub fn new(relay: Arc<Relay>, ctx: IncomingRequestContext) -> Self {
+		Self { relay, ctx }
+	}
+}
+
+#[async_trait::async_trait]
+impl ToolInvoker for RelayToolInvoker {
+	async fn invoke(&self, tool_name: &str, args: serde_json::Value) -> Result<serde_json::Value, ExecutionError> {
+		// Resolve the tool call (handles virtual tools, compositions, and backend tools)
+		let resolved = self
+			.relay
+			.resolve_tool_call(tool_name, args)
+			.map_err(|e| ExecutionError::ToolExecutionFailed(e.to_string()))?;
+
+		match resolved {
+			ResolvedToolCall::Backend { target, tool_name: backend_tool, args, virtual_name } => {
+				// Use the Relay's invoke_tool method which handles the MCP protocol properly
+				let result = self
+					.relay
+					.invoke_tool(&target, &backend_tool, args, &self.ctx)
+					.await
+					.map_err(|e| ExecutionError::ToolExecutionFailed(e.to_string()))?;
+
+				// Apply output transformation if this was a virtual tool
+				if let Some(vname) = virtual_name {
+					self.relay
+						.transform_tool_output(&vname, result)
+						.map_err(|e| ExecutionError::ToolExecutionFailed(e.to_string()))
+				} else {
+					Ok(result)
+				}
+			},
+			ResolvedToolCall::Composition { name, .. } => {
+				// This is a nested composition call - we need to execute it recursively
+				// The CompositionExecutor will handle this through its execute method
+				// For now, return an error indicating recursive composition is not yet supported
+				// TODO: Support nested compositions by passing the executor reference
+				Err(ExecutionError::ToolExecutionFailed(format!(
+					"Nested composition '{}' execution is not yet supported. \
+					Compositions can only call backend tools, not other compositions.",
+					name
+				)))
+			},
+		}
+	}
 }
 
 impl Relay {
@@ -565,7 +688,7 @@ pub fn setup_request_log(
 	(_span, log, cel)
 }
 
-fn messages_to_response(
+pub(crate) fn messages_to_response(
 	id: RequestId,
 	stream: impl Stream<Item = Result<ServerJsonRpcMessage, ClientError>> + Send + 'static,
 ) -> Result<Response, UpstreamError> {

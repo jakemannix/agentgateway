@@ -17,7 +17,8 @@ use super::types::Registry;
 #[derive(Debug)]
 pub struct RegistryStore {
 	/// Current compiled registry (atomically swappable)
-	current: Arc<ArcSwap<Option<CompiledRegistry>>>,
+	/// Uses Arc<CompiledRegistry> internally so we can share with executors
+	current: Arc<ArcSwap<Option<Arc<CompiledRegistry>>>>,
 	/// Client for fetching updates (optional - None means static registry)
 	client: Option<RegistryClient>,
 }
@@ -56,8 +57,14 @@ impl RegistryStore {
 	///
 	/// Returns a guard that provides access to the registry. The registry
 	/// remains valid as long as the guard is held.
-	pub fn get(&self) -> arc_swap::Guard<Arc<Option<CompiledRegistry>>> {
+	pub fn get(&self) -> arc_swap::Guard<Arc<Option<Arc<CompiledRegistry>>>> {
 		self.current.load()
+	}
+
+	/// Get an Arc reference to the compiled registry for sharing with executors
+	pub fn get_arc(&self) -> Option<Arc<CompiledRegistry>> {
+		let guard = self.current.load();
+		guard.as_ref().as_ref().map(Arc::clone)
 	}
 
 	/// Check if a registry is loaded
@@ -68,14 +75,14 @@ impl RegistryStore {
 	/// Update registry with new data
 	pub fn update(&self, registry: Registry) -> Result<(), RegistryError> {
 		let compiled = CompiledRegistry::compile(registry)?;
-		self.current.store(Arc::new(Some(compiled)));
+		self.current.store(Arc::new(Some(Arc::new(compiled))));
 		info!("Registry updated successfully");
 		Ok(())
 	}
 
 	/// Update registry with pre-compiled data
 	pub fn update_compiled(&self, compiled: CompiledRegistry) {
-		self.current.store(Arc::new(Some(compiled)));
+		self.current.store(Arc::new(Some(Arc::new(compiled))));
 		info!("Registry updated with compiled data");
 	}
 
@@ -240,8 +247,13 @@ impl RegistryStoreRef {
 	}
 
 	/// Get the current compiled registry
-	pub fn get(&self) -> arc_swap::Guard<Arc<Option<CompiledRegistry>>> {
+	pub fn get(&self) -> arc_swap::Guard<Arc<Option<Arc<CompiledRegistry>>>> {
 		self.inner.get()
+	}
+
+	/// Get an Arc reference to the compiled registry for sharing with executors
+	pub fn get_arc(&self) -> Option<Arc<CompiledRegistry>> {
+		self.inner.get_arc()
 	}
 
 	/// Check if a registry is loaded

@@ -18,8 +18,9 @@ use sse_stream::{KeepAlive, Sse, SseBody, SseStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::http::Response;
-use crate::mcp::handler::{Relay, ResolvedToolCall};
+use crate::mcp::handler::{Relay, RelayToolInvoker, ResolvedToolCall};
 use crate::mcp::mergestream::Messages;
+use crate::mcp::registry::executor::CompositionExecutor;
 use crate::mcp::streamablehttp::{ServerSseMessage, StreamableHttpPostResponse};
 use crate::mcp::upstream::{IncomingRequestContext, UpstreamError};
 use crate::mcp::{ClientError, MCPOperation, rbac};
@@ -338,15 +339,49 @@ impl Session {
 									});
 								}
 
-								// Execute the composition
-								// Note: Full composition execution requires the CompositionExecutor
-								// For now, return an error indicating composition execution is not yet implemented
-								// TODO: Integrate CompositionExecutor once ToolInvoker is implemented
-								Err(UpstreamError::InvalidRequest(format!(
-									"Composition execution for '{}' is not yet fully integrated. \
-									The composition system requires a ToolInvoker implementation.",
-									comp_name
-								)))
+								// Execute the composition using CompositionExecutor
+								let registry_ref = self.relay.registry().ok_or_else(|| {
+									UpstreamError::InvalidRequest("No registry configured for composition execution".to_string())
+								})?;
+
+								// Get an Arc to the compiled registry for the executor
+								let compiled_registry = registry_ref.get_arc().ok_or_else(|| {
+									UpstreamError::InvalidRequest("Registry not loaded".to_string())
+								})?;
+
+								// Create a ToolInvoker that uses the Relay to make real backend calls
+								let tool_invoker = Arc::new(RelayToolInvoker::new(
+									self.relay.clone(),
+									ctx.clone(),
+								));
+
+								// Create the executor and run the composition
+								let executor = CompositionExecutor::new(compiled_registry, tool_invoker);
+
+								let result = executor
+									.execute(&comp_name, comp_args)
+									.await
+									.map_err(|e| UpstreamError::InvalidRequest(format!(
+										"Composition execution failed: {}",
+										e
+									)))?;
+
+								// Build a successful MCP CallToolResult response
+								let call_result = rmcp::model::CallToolResult {
+									content: vec![rmcp::model::Content::text(
+										serde_json::to_string(&result).unwrap_or_default()
+									)],
+									structured_content: None,
+									is_error: None,
+									meta: None,
+								};
+
+								// Convert to Response using the same pattern as regular tool calls
+								let id = r.id.clone();
+								crate::mcp::handler::messages_to_response(
+									id.clone(),
+									Messages::from_result(id, call_result)
+								)
 							},
 						}
 					},
