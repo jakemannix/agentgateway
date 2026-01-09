@@ -335,3 +335,308 @@ async fn test_output_transformation_passthrough() -> anyhow::Result<()> {
 
 	Ok(())
 }
+
+// =============================================================================
+// Composition Tests
+// =============================================================================
+
+use agentgateway::mcp::registry::{
+	ToolDefinition, PatternSpec, PipelineSpec, PipelineStep, StepOperation, ToolCall,
+	ScatterGatherSpec, ScatterTarget, AggregationStrategy, AggregationOp,
+	FilterSpec, FieldPredicate, PredicateValue,
+	SchemaMapSpec, FieldSource, LiteralValue,
+	MapEachSpec, MapEachInner,
+};
+
+/// Test parsing and compiling a composition-based tool
+#[tokio::test]
+async fn test_composition_parsing() -> anyhow::Result<()> {
+	let registry_json = r#"{
+		"schemaVersion": "1.0",
+		"tools": [
+			{
+				"name": "research_pipeline",
+				"description": "Multi-source research",
+				"spec": {
+					"pipeline": {
+						"steps": [
+							{
+								"id": "search",
+								"operation": { "tool": { "name": "web_search" } }
+							},
+							{
+								"id": "summarize",
+								"operation": { "tool": { "name": "summarize" } }
+							}
+						]
+					}
+				}
+			}
+		]
+	}"#;
+
+	let registry: Registry = serde_json::from_str(registry_json)?;
+	assert_eq!(registry.len(), 1);
+
+	let compiled = CompiledRegistry::compile(registry)?;
+	assert!(compiled.is_composition("research_pipeline"));
+	assert!(!compiled.is_source_tool("research_pipeline"));
+
+	Ok(())
+}
+
+/// Test mixed registry with both source tools and compositions
+#[tokio::test]
+async fn test_mixed_registry() -> anyhow::Result<()> {
+	// Create source tool
+	let source_tool = ToolDefinition::source("get_weather", "weather", "fetch_weather");
+
+	// Create composition
+	let composition = ToolDefinition::composition(
+		"multi_search",
+		PatternSpec::ScatterGather(ScatterGatherSpec {
+			targets: vec![
+				ScatterTarget::Tool("search_web".to_string()),
+				ScatterTarget::Tool("search_arxiv".to_string()),
+			],
+			aggregation: AggregationStrategy {
+				ops: vec![AggregationOp::Flatten(true)],
+			},
+			timeout_ms: Some(5000),
+			fail_fast: false,
+		}),
+	);
+
+	let registry = Registry::with_tool_definitions(vec![source_tool, composition]);
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	// Check source tool
+	assert!(compiled.is_source_tool("get_weather"));
+	assert!(!compiled.is_composition("get_weather"));
+	assert!(compiled.is_virtualized("weather", "fetch_weather"));
+
+	// Check composition
+	assert!(compiled.is_composition("multi_search"));
+	assert!(!compiled.is_source_tool("multi_search"));
+
+	Ok(())
+}
+
+/// Test two-pass compilation with forward references
+#[tokio::test]
+async fn test_forward_reference_resolution() -> anyhow::Result<()> {
+	// Composition references a tool defined after it
+	let registry_json = r#"{
+		"schemaVersion": "1.0",
+		"tools": [
+			{
+				"name": "pipeline",
+				"spec": {
+					"scatterGather": {
+						"targets": [
+							{ "tool": "normalized_search" }
+						],
+						"aggregation": { "ops": [] }
+					}
+				}
+			},
+			{
+				"name": "normalized_search",
+				"source": {
+					"target": "search",
+					"tool": "raw_search"
+				}
+			}
+		]
+	}"#;
+
+	let registry: Registry = serde_json::from_str(registry_json)?;
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	// Both should exist and have correct types
+	assert!(compiled.is_composition("pipeline"));
+	assert!(compiled.is_source_tool("normalized_search"));
+
+	Ok(())
+}
+
+/// Test composition tool references are resolved
+#[tokio::test]
+async fn test_composition_references() -> anyhow::Result<()> {
+	let composition = ToolDefinition::composition(
+		"research",
+		PatternSpec::Pipeline(PipelineSpec {
+			steps: vec![
+				PipelineStep {
+					id: "step1".to_string(),
+					operation: StepOperation::Tool(ToolCall { name: "search".to_string() }),
+					input: None,
+				},
+				PipelineStep {
+					id: "step2".to_string(),
+					operation: StepOperation::Tool(ToolCall { name: "process".to_string() }),
+					input: None,
+				},
+			],
+		}),
+	);
+
+	let registry = Registry::with_tool_definitions(vec![composition]);
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	let tool = compiled.get_tool("research").unwrap();
+	let comp_info = tool.composition_info().unwrap();
+
+	// Check references were collected
+	assert!(comp_info.resolved_references.contains(&"search".to_string()));
+	assert!(comp_info.resolved_references.contains(&"process".to_string()));
+
+	Ok(())
+}
+
+/// Test duplicate tool name detection
+#[tokio::test]
+async fn test_duplicate_tool_name_error() -> anyhow::Result<()> {
+	let registry_json = r#"{
+		"tools": [
+			{ "name": "duplicate", "source": { "target": "a", "tool": "a" } },
+			{ "name": "duplicate", "source": { "target": "b", "tool": "b" } }
+		]
+	}"#;
+
+	let registry: Registry = serde_json::from_str(registry_json)?;
+	let result = CompiledRegistry::compile(registry);
+
+	assert!(result.is_err());
+	let err = result.unwrap_err();
+	assert!(err.to_string().contains("duplicate"));
+
+	Ok(())
+}
+
+/// Test composition with output transform
+#[tokio::test]
+async fn test_composition_output_transform() -> anyhow::Result<()> {
+	let registry_json = r#"{
+		"tools": [
+			{
+				"name": "normalized_search",
+				"spec": {
+					"schemaMap": {
+						"mappings": {
+							"title": { "path": "$.result.name" }
+						}
+					}
+				},
+				"outputTransform": {
+					"mappings": {
+						"final_title": { "path": "$.title" },
+						"source": { "literal": { "stringValue": "processed" } }
+					}
+				}
+			}
+		]
+	}"#;
+
+	let registry: Registry = serde_json::from_str(registry_json)?;
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	assert!(compiled.is_composition("normalized_search"));
+
+	// The composition has an output transform
+	let tool = compiled.get_tool("normalized_search").unwrap();
+	let comp_info = tool.composition_info().unwrap();
+	assert!(comp_info.output_transform.is_some());
+
+	Ok(())
+}
+
+/// Test all pattern types can be parsed
+#[tokio::test]
+async fn test_all_pattern_types_parsing() -> anyhow::Result<()> {
+	let registry_json = r#"{
+		"tools": [
+			{
+				"name": "pipeline_test",
+				"spec": {
+					"pipeline": {
+						"steps": [
+							{ "id": "s1", "operation": { "tool": { "name": "tool1" } } }
+						]
+					}
+				}
+			},
+			{
+				"name": "scatter_test",
+				"spec": {
+					"scatterGather": {
+						"targets": [{ "tool": "t1" }, { "tool": "t2" }],
+						"aggregation": { "ops": [{ "flatten": true }] }
+					}
+				}
+			},
+			{
+				"name": "filter_test",
+				"spec": {
+					"filter": {
+						"predicate": {
+							"field": "$.score",
+							"op": "gt",
+							"value": { "numberValue": 0.5 }
+						}
+					}
+				}
+			},
+			{
+				"name": "schema_map_test",
+				"spec": {
+					"schemaMap": {
+						"mappings": {
+							"title": { "path": "$.name" }
+						}
+					}
+				}
+			},
+			{
+				"name": "map_each_test",
+				"spec": {
+					"mapEach": {
+						"inner": { "tool": "process" }
+					}
+				}
+			}
+		]
+	}"#;
+
+	let registry: Registry = serde_json::from_str(registry_json)?;
+	assert_eq!(registry.len(), 5);
+
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	// All should be compositions
+	assert!(compiled.is_composition("pipeline_test"));
+	assert!(compiled.is_composition("scatter_test"));
+	assert!(compiled.is_composition("filter_test"));
+	assert!(compiled.is_composition("schema_map_test"));
+	assert!(compiled.is_composition("map_each_test"));
+
+	Ok(())
+}
+
+/// Test prepare_call_args fails for compositions
+#[tokio::test]
+async fn test_prepare_call_args_composition_error() -> anyhow::Result<()> {
+	let composition = ToolDefinition::composition(
+		"my_composition",
+		PatternSpec::Pipeline(PipelineSpec { steps: vec![] }),
+	);
+
+	let registry = Registry::with_tool_definitions(vec![composition]);
+	let compiled = CompiledRegistry::compile(registry)?;
+
+	// Should error because compositions require the executor
+	let result = compiled.prepare_call_args("my_composition", serde_json::json!({}));
+	assert!(result.is_err());
+
+	Ok(())
+}

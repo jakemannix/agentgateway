@@ -18,7 +18,7 @@ use sse_stream::{KeepAlive, Sse, SseBody, SseStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::http::Response;
-use crate::mcp::handler::Relay;
+use crate::mcp::handler::{Relay, ResolvedToolCall};
 use crate::mcp::mergestream::Messages;
 use crate::mcp::streamablehttp::{ServerSseMessage, StreamableHttpPostResponse};
 use crate::mcp::upstream::{IncomingRequestContext, UpstreamError};
@@ -282,28 +282,73 @@ impl Session {
 					},
 					ClientRequest::CallToolRequest(ctr) => {
 						let name = ctr.params.name.clone();
-						let (service_name, tool) = self.relay.parse_resource_name(&name)?;
-						log.non_atomic_mutate(|l| {
-							l.resource_name = Some(tool.to_string());
-							l.target_name = Some(service_name.to_string());
-							l.resource = Some(MCPOperation::Tool);
-						});
-						if !self.relay.policies.validate(
-							&rbac::ResourceType::Tool(rbac::ResourceId::new(
-								service_name.to_string(),
-								tool.to_string(),
-							)),
-							cel.as_ref(),
-						) {
-							return Err(UpstreamError::Authorization {
-								resource_type: "tool".to_string(),
-								resource_name: name.to_string(),
-							});
-						}
+						let args = ctr.params.arguments.clone().map(|v| serde_json::Value::Object(v)).unwrap_or(serde_json::Value::Object(Default::default()));
 
-						let tn = tool.to_string();
-						ctr.params.name = tn.into();
-						self.relay.send_single(r, ctx, service_name).await
+						// Resolve the tool call - may be a backend tool, virtual tool, or composition
+						let resolved = self.relay.resolve_tool_call(&name, args)?;
+
+						match resolved {
+							ResolvedToolCall::Backend { target, tool_name, args: resolved_args, virtual_name } => {
+								log.non_atomic_mutate(|l| {
+									l.resource_name = Some(tool_name.clone());
+									l.target_name = Some(target.clone());
+									l.resource = Some(MCPOperation::Tool);
+								});
+
+								// Validate policies against the resolved tool
+								if !self.relay.policies.validate(
+									&rbac::ResourceType::Tool(rbac::ResourceId::new(
+										target.clone(),
+										tool_name.clone(),
+									)),
+									cel.as_ref(),
+								) {
+									return Err(UpstreamError::Authorization {
+										resource_type: "tool".to_string(),
+										resource_name: name.to_string(),
+									});
+								}
+
+								// Update the request with resolved tool name and args
+								ctr.params.name = tool_name.clone().into();
+								if let Some(obj) = resolved_args.as_object() {
+									ctr.params.arguments = Some(obj.clone());
+								}
+
+								self.relay.send_single(r, ctx, &target).await
+							},
+							ResolvedToolCall::Composition { name: comp_name, args: comp_args } => {
+								log.non_atomic_mutate(|l| {
+									l.resource_name = Some(comp_name.clone());
+									l.target_name = Some("_composition".to_string());
+									l.resource = Some(MCPOperation::Tool);
+								});
+
+								// Validate policies for the composition
+								if !self.relay.policies.validate(
+									&rbac::ResourceType::Tool(rbac::ResourceId::new(
+										"_composition".to_string(),
+										comp_name.clone(),
+									)),
+									cel.as_ref(),
+								) {
+									return Err(UpstreamError::Authorization {
+										resource_type: "tool".to_string(),
+										resource_name: comp_name.to_string(),
+									});
+								}
+
+								// Execute the composition
+								// Note: Full composition execution requires the CompositionExecutor
+								// For now, return an error indicating composition execution is not yet implemented
+								// TODO: Integrate CompositionExecutor once ToolInvoker is implemented
+								Err(UpstreamError::InvalidRequest(format!(
+									"Composition execution for '{}' is not yet fully integrated. \
+									The composition system requires a ToolInvoker implementation.",
+									comp_name
+								)))
+							},
+						}
 					},
 					ClientRequest::GetPromptRequest(gpr) => {
 						let name = gpr.params.name.clone();

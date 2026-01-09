@@ -1,8 +1,13 @@
-// Registry types for virtual tool definitions
+// Registry types for tool definitions
+//
+// Supports both virtual tools (1:1 mapping) and compositions (N:1 orchestration).
+// These types correspond to the registry.proto schema.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use super::patterns::{FieldSource, PatternSpec, SchemaMapSpec};
 
 /// Parsed registry from JSON
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -12,19 +17,116 @@ pub struct Registry {
 	#[serde(default = "default_schema_version")]
 	pub schema_version: String,
 
-	/// List of virtual tool definitions
+	/// List of tool definitions (virtual tools and compositions)
 	#[serde(default)]
-	pub tools: Vec<VirtualToolDef>,
+	pub tools: Vec<ToolDefinition>,
 }
 
 fn default_schema_version() -> String {
 	"1.0".to_string()
 }
 
-/// Virtual tool definition from registry
+/// Unified tool definition - either a virtual tool or a composition
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VirtualToolDef {
+pub struct ToolDefinition {
+	/// Name exposed to agents (unique identifier)
+	pub name: String,
+
+	/// Optional description
+	#[serde(default)]
+	pub description: Option<String>,
+
+	/// Tool implementation - either source-based or composition
+	#[serde(flatten)]
+	pub implementation: ToolImplementation,
+
+	/// Input schema override (JSON Schema)
+	#[serde(default)]
+	pub input_schema: Option<serde_json::Value>,
+
+	/// Output transformation
+	#[serde(default)]
+	pub output_transform: Option<OutputTransform>,
+
+	/// Semantic version of this tool definition
+	#[serde(default)]
+	pub version: Option<String>,
+
+	/// Arbitrary metadata (owner, classification, etc.)
+	#[serde(default)]
+	pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Tool implementation - either source-based (1:1) or composition (N:1)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolImplementation {
+	/// Virtual tool: adapts a single backend tool (1:1)
+	Source(SourceTool),
+
+	/// Composition: orchestrates multiple tools (N:1)
+	Spec(PatternSpec),
+}
+
+/// Source tool definition - maps to a single backend tool
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceTool {
+	/// Target name (MCP server/backend name)
+	pub target: String,
+
+	/// Original tool name on that target
+	pub tool: String,
+
+	/// Fields to inject at call time (supports ${ENV_VAR} substitution)
+	#[serde(default)]
+	pub defaults: HashMap<String, serde_json::Value>,
+
+	/// Fields to remove from schema (hidden from agents)
+	#[serde(default)]
+	pub hide_fields: Vec<String>,
+}
+
+/// Output transformation - enhanced version supporting all mapping features
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputTransform {
+	/// Field name -> source mapping
+	pub mappings: HashMap<String, FieldSource>,
+}
+
+impl OutputTransform {
+	/// Create from a SchemaMapSpec
+	pub fn from_schema_map(schema_map: SchemaMapSpec) -> Self {
+		Self { mappings: schema_map.mappings }
+	}
+
+	/// Create an empty output transform
+	pub fn empty() -> Self {
+		Self { mappings: HashMap::new() }
+	}
+
+	/// Check if this transform has any mappings
+	pub fn is_empty(&self) -> bool {
+		self.mappings.is_empty()
+	}
+}
+
+// =============================================================================
+// Legacy compatibility: VirtualToolDef alias
+// =============================================================================
+
+/// Virtual tool definition from registry (legacy alias)
+///
+/// This type is provided for backward compatibility. New code should use
+/// `ToolDefinition` with `ToolImplementation::Source`.
+pub type VirtualToolDef = LegacyVirtualToolDef;
+
+/// Legacy virtual tool definition (for backward compatibility)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyVirtualToolDef {
 	/// Name exposed to agents (the virtual/renamed tool name)
 	pub name: String,
 
@@ -47,7 +149,7 @@ pub struct VirtualToolDef {
 	#[serde(default)]
 	pub hide_fields: Vec<String>,
 
-	/// Output transformation schema with JSONPath mappings
+	/// Output transformation schema with JSONPath mappings (legacy format)
 	#[serde(default)]
 	pub output_schema: Option<OutputSchema>,
 
@@ -60,7 +162,7 @@ pub struct VirtualToolDef {
 	pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Source backend tool reference
+/// Source backend tool reference (legacy)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolSource {
 	/// Target name (MCP server/backend name)
@@ -70,7 +172,7 @@ pub struct ToolSource {
 	pub tool: String,
 }
 
-/// Output transformation schema
+/// Output transformation schema (legacy format)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputSchema {
@@ -87,7 +189,7 @@ fn default_object_type() -> String {
 	"object".to_string()
 }
 
-/// Output field definition
+/// Output field definition (legacy format)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputField {
@@ -104,17 +206,26 @@ pub struct OutputField {
 	pub description: Option<String>,
 }
 
+// =============================================================================
+// Implementations
+// =============================================================================
+
 impl Registry {
 	/// Create an empty registry
 	pub fn new() -> Self {
 		Self::default()
 	}
 
-	/// Create a registry with the given tools
+	/// Create a registry with the given tools (unified format)
+	pub fn with_tool_definitions(tools: Vec<ToolDefinition>) -> Self {
+		Self { schema_version: default_schema_version(), tools }
+	}
+
+	/// Create a registry with legacy virtual tool definitions
 	pub fn with_tools(tools: Vec<VirtualToolDef>) -> Self {
 		Self {
 			schema_version: default_schema_version(),
-			tools,
+			tools: tools.into_iter().map(ToolDefinition::from_legacy).collect(),
 		}
 	}
 
@@ -129,15 +240,149 @@ impl Registry {
 	}
 }
 
-impl VirtualToolDef {
-	/// Create a simple virtual tool mapping
-	pub fn new(name: impl Into<String>, target: impl Into<String>, tool: impl Into<String>) -> Self {
+impl ToolDefinition {
+	/// Create a source-based tool (virtual tool)
+	pub fn source(
+		name: impl Into<String>,
+		target: impl Into<String>,
+		tool: impl Into<String>,
+	) -> Self {
 		Self {
 			name: name.into(),
-			source: ToolSource {
+			description: None,
+			implementation: ToolImplementation::Source(SourceTool {
 				target: target.into(),
 				tool: tool.into(),
-			},
+				defaults: HashMap::new(),
+				hide_fields: Vec::new(),
+			}),
+			input_schema: None,
+			output_transform: None,
+			version: None,
+			metadata: HashMap::new(),
+		}
+	}
+
+	/// Create a composition-based tool
+	pub fn composition(name: impl Into<String>, spec: PatternSpec) -> Self {
+		Self {
+			name: name.into(),
+			description: None,
+			implementation: ToolImplementation::Spec(spec),
+			input_schema: None,
+			output_transform: None,
+			version: None,
+			metadata: HashMap::new(),
+		}
+	}
+
+	/// Convert from legacy VirtualToolDef
+	pub fn from_legacy(legacy: VirtualToolDef) -> Self {
+		let output_transform = legacy.output_schema.map(|os| {
+			let mappings = os
+				.properties
+				.into_iter()
+				.map(|(name, field)| {
+					let source = if let Some(path) = field.source_field {
+						FieldSource::Path(path)
+					} else {
+						// Passthrough: use field name as path
+						FieldSource::Path(format!("$.{}", name))
+					};
+					(name, source)
+				})
+				.collect();
+			OutputTransform { mappings }
+		});
+
+		Self {
+			name: legacy.name,
+			description: legacy.description,
+			implementation: ToolImplementation::Source(SourceTool {
+				target: legacy.source.target,
+				tool: legacy.source.tool,
+				defaults: legacy.defaults,
+				hide_fields: legacy.hide_fields,
+			}),
+			input_schema: legacy.input_schema,
+			output_transform,
+			version: legacy.version,
+			metadata: legacy.metadata,
+		}
+	}
+
+	/// Builder: set description
+	pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+		self.description = Some(desc.into());
+		self
+	}
+
+	/// Builder: set output transform
+	pub fn with_output_transform(mut self, transform: OutputTransform) -> Self {
+		self.output_transform = Some(transform);
+		self
+	}
+
+	/// Check if this is a source-based tool
+	pub fn is_source(&self) -> bool {
+		matches!(self.implementation, ToolImplementation::Source(_))
+	}
+
+	/// Check if this is a composition
+	pub fn is_composition(&self) -> bool {
+		matches!(self.implementation, ToolImplementation::Spec(_))
+	}
+
+	/// Get the source tool if this is a source-based tool
+	pub fn source_tool(&self) -> Option<&SourceTool> {
+		match &self.implementation {
+			ToolImplementation::Source(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	/// Get the pattern spec if this is a composition
+	pub fn pattern_spec(&self) -> Option<&PatternSpec> {
+		match &self.implementation {
+			ToolImplementation::Spec(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	/// Get the names of tools referenced by this definition
+	pub fn referenced_tools(&self) -> Vec<&str> {
+		match &self.implementation {
+			ToolImplementation::Source(_) => vec![],
+			ToolImplementation::Spec(spec) => spec.referenced_tools(),
+		}
+	}
+}
+
+impl SourceTool {
+	/// Builder: add a default value
+	pub fn with_default(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+		self.defaults.insert(key.into(), value);
+		self
+	}
+
+	/// Builder: set hidden fields
+	pub fn with_hidden_fields(mut self, fields: Vec<String>) -> Self {
+		self.hide_fields = fields;
+		self
+	}
+}
+
+// Legacy builder methods for VirtualToolDef
+impl LegacyVirtualToolDef {
+	/// Create a simple virtual tool mapping
+	pub fn new(
+		name: impl Into<String>,
+		target: impl Into<String>,
+		tool: impl Into<String>,
+	) -> Self {
+		Self {
+			name: name.into(),
+			source: ToolSource { target: target.into(), tool: tool.into() },
 			description: None,
 			input_schema: None,
 			defaults: HashMap::new(),
@@ -176,30 +421,19 @@ impl VirtualToolDef {
 impl OutputSchema {
 	/// Create an output schema with the given properties
 	pub fn new(properties: HashMap<String, OutputField>) -> Self {
-		Self {
-			schema_type: default_object_type(),
-			properties,
-		}
+		Self { schema_type: default_object_type(), properties }
 	}
 }
 
 impl OutputField {
 	/// Create a new output field with JSONPath source
 	pub fn new(field_type: impl Into<String>, source_field: impl Into<String>) -> Self {
-		Self {
-			field_type: field_type.into(),
-			source_field: Some(source_field.into()),
-			description: None,
-		}
+		Self { field_type: field_type.into(), source_field: Some(source_field.into()), description: None }
 	}
 
 	/// Create a field without JSONPath (passthrough)
 	pub fn passthrough(field_type: impl Into<String>) -> Self {
-		Self {
-			field_type: field_type.into(),
-			source_field: None,
-			description: None,
-		}
+		Self { field_type: field_type.into(), source_field: None, description: None }
 	}
 }
 
@@ -219,6 +453,158 @@ mod tests {
 	}
 
 	#[test]
+	fn test_parse_source_tool() {
+		let json = r#"{
+			"name": "get_weather",
+			"source": {
+				"target": "weather",
+				"tool": "fetch_weather"
+			}
+		}"#;
+
+		let tool: ToolDefinition = serde_json::from_str(json).unwrap();
+		assert_eq!(tool.name, "get_weather");
+		assert!(tool.is_source());
+		let source = tool.source_tool().unwrap();
+		assert_eq!(source.target, "weather");
+		assert_eq!(source.tool, "fetch_weather");
+	}
+
+	#[test]
+	fn test_parse_composition_tool() {
+		let json = r#"{
+			"name": "research_pipeline",
+			"spec": {
+				"pipeline": {
+					"steps": [
+						{
+							"id": "search",
+							"operation": { "tool": { "name": "web_search" } }
+						}
+					]
+				}
+			}
+		}"#;
+
+		let tool: ToolDefinition = serde_json::from_str(json).unwrap();
+		assert_eq!(tool.name, "research_pipeline");
+		assert!(tool.is_composition());
+	}
+
+	#[test]
+	fn test_parse_mixed_registry() {
+		let json = r#"{
+			"schemaVersion": "1.0",
+			"tools": [
+				{
+					"name": "get_weather",
+					"source": {
+						"target": "weather",
+						"tool": "fetch_weather"
+					}
+				},
+				{
+					"name": "research_pipeline",
+					"spec": {
+						"scatterGather": {
+							"targets": [
+								{ "tool": "search_web" },
+								{ "tool": "search_arxiv" }
+							],
+							"aggregation": { "ops": [{ "flatten": true }] }
+						}
+					}
+				}
+			]
+		}"#;
+
+		let registry: Registry = serde_json::from_str(json).unwrap();
+		assert_eq!(registry.tools.len(), 2);
+		assert!(registry.tools[0].is_source());
+		assert!(registry.tools[1].is_composition());
+	}
+
+	#[test]
+	fn test_parse_tool_with_output_transform() {
+		let json = r#"{
+			"name": "normalized_search",
+			"source": {
+				"target": "search",
+				"tool": "raw_search"
+			},
+			"outputTransform": {
+				"mappings": {
+					"title": { "path": "$.result.title" },
+					"url": { "path": "$.result.link" },
+					"source": { "literal": { "stringValue": "web" } }
+				}
+			}
+		}"#;
+
+		let tool: ToolDefinition = serde_json::from_str(json).unwrap();
+		assert!(tool.output_transform.is_some());
+		let transform = tool.output_transform.unwrap();
+		assert_eq!(transform.mappings.len(), 3);
+	}
+
+	#[test]
+	fn test_legacy_virtual_tool_conversion() {
+		let legacy = VirtualToolDef::new("get_weather", "weather", "fetch_weather")
+			.with_description("Get weather info")
+			.with_default("units", serde_json::json!("metric"));
+
+		let unified = ToolDefinition::from_legacy(legacy);
+		assert_eq!(unified.name, "get_weather");
+		assert_eq!(unified.description, Some("Get weather info".to_string()));
+		assert!(unified.is_source());
+
+		let source = unified.source_tool().unwrap();
+		assert_eq!(source.target, "weather");
+		assert_eq!(source.defaults.get("units"), Some(&serde_json::json!("metric")));
+	}
+
+	#[test]
+	fn test_builder_source_tool() {
+		let tool = ToolDefinition::source("my_tool", "backend", "original")
+			.with_description("A test tool");
+
+		assert_eq!(tool.name, "my_tool");
+		assert_eq!(tool.description, Some("A test tool".to_string()));
+	}
+
+	#[test]
+	fn test_builder_composition_tool() {
+		use super::super::patterns::{PipelineSpec, PipelineStep, StepOperation, ToolCall};
+
+		let spec = PatternSpec::Pipeline(PipelineSpec {
+			steps: vec![PipelineStep {
+				id: "step1".to_string(),
+				operation: StepOperation::Tool(ToolCall { name: "search".to_string() }),
+				input: None,
+			}],
+		});
+
+		let tool = ToolDefinition::composition("my_composition", spec)
+			.with_description("A composition");
+
+		assert!(tool.is_composition());
+		assert_eq!(tool.referenced_tools(), vec!["search"]);
+	}
+
+	#[test]
+	fn test_registry_with_tools_legacy() {
+		let registry = Registry::with_tools(vec![
+			VirtualToolDef::new("tool1", "backend1", "original1"),
+			VirtualToolDef::new("tool2", "backend2", "original2"),
+		]);
+
+		assert_eq!(registry.len(), 2);
+		assert!(registry.tools[0].is_source());
+		assert!(registry.tools[1].is_source());
+	}
+
+	// Preserve original test compatibility
+	#[test]
 	fn test_parse_registry_with_version() {
 		let json = r#"{
             "schemaVersion": "2.0",
@@ -230,122 +616,6 @@ mod tests {
 	}
 
 	#[test]
-	fn test_parse_simple_virtual_tool() {
-		let json = r#"{
-            "name": "get_weather",
-            "source": {
-                "target": "weather",
-                "tool": "fetch_weather"
-            }
-        }"#;
-
-		let tool: VirtualToolDef = serde_json::from_str(json).unwrap();
-		assert_eq!(tool.name, "get_weather");
-		assert_eq!(tool.source.target, "weather");
-		assert_eq!(tool.source.tool, "fetch_weather");
-		assert!(tool.description.is_none());
-		assert!(tool.defaults.is_empty());
-		assert!(tool.hide_fields.is_empty());
-	}
-
-	#[test]
-	fn test_parse_full_virtual_tool() {
-		let json = r#"{
-            "name": "get_weather",
-            "source": {
-                "target": "weather",
-                "tool": "fetch_weather"
-            },
-            "description": "Get current weather for a city",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "city": {"type": "string"}
-                },
-                "required": ["city"]
-            },
-            "defaults": {
-                "api_key": "${WEATHER_API_KEY}",
-                "units": "metric"
-            },
-            "hideFields": ["debug_mode", "raw_output"],
-            "outputSchema": {
-                "type": "object",
-                "properties": {
-                    "temperature": {
-                        "type": "number",
-                        "sourceField": "$.data.current.temp_f"
-                    },
-                    "conditions": {
-                        "type": "string",
-                        "sourceField": "$.data.current.condition.text"
-                    }
-                }
-            },
-            "version": "2.1.0",
-            "metadata": {
-                "owner": "weather-team",
-                "dataClassification": "public"
-            }
-        }"#;
-
-		let tool: VirtualToolDef = serde_json::from_str(json).unwrap();
-		assert_eq!(tool.name, "get_weather");
-		assert_eq!(tool.description, Some("Get current weather for a city".to_string()));
-		assert_eq!(tool.defaults.len(), 2);
-		assert_eq!(tool.defaults.get("units"), Some(&serde_json::json!("metric")));
-		assert_eq!(tool.hide_fields, vec!["debug_mode", "raw_output"]);
-		assert_eq!(tool.version, Some("2.1.0".to_string()));
-
-		let output = tool.output_schema.unwrap();
-		assert_eq!(output.schema_type, "object");
-		assert_eq!(output.properties.len(), 2);
-
-		let temp_field = output.properties.get("temperature").unwrap();
-		assert_eq!(temp_field.field_type, "number");
-		assert_eq!(temp_field.source_field, Some("$.data.current.temp_f".to_string()));
-	}
-
-	#[test]
-	fn test_parse_full_registry() {
-		let json = r#"{
-            "schemaVersion": "1.0",
-            "tools": [
-                {
-                    "name": "get_weather",
-                    "source": {"target": "weather", "tool": "fetch_weather"}
-                },
-                {
-                    "name": "search_web",
-                    "source": {"target": "search", "tool": "web_search"},
-                    "description": "Search the web"
-                }
-            ]
-        }"#;
-
-		let registry: Registry = serde_json::from_str(json).unwrap();
-		assert_eq!(registry.tools.len(), 2);
-		assert_eq!(registry.tools[0].name, "get_weather");
-		assert_eq!(registry.tools[1].name, "search_web");
-		assert_eq!(registry.tools[1].description, Some("Search the web".to_string()));
-	}
-
-	#[test]
-	fn test_builder_pattern() {
-		let tool = VirtualToolDef::new("my_tool", "backend", "original_tool")
-			.with_description("A test tool")
-			.with_default("key", serde_json::json!("value"))
-			.with_hidden_fields(vec!["secret".to_string()]);
-
-		assert_eq!(tool.name, "my_tool");
-		assert_eq!(tool.source.target, "backend");
-		assert_eq!(tool.source.tool, "original_tool");
-		assert_eq!(tool.description, Some("A test tool".to_string()));
-		assert_eq!(tool.defaults.get("key"), Some(&serde_json::json!("value")));
-		assert_eq!(tool.hide_fields, vec!["secret"]);
-	}
-
-	#[test]
 	fn test_registry_methods() {
 		let empty = Registry::new();
 		assert!(empty.is_empty());
@@ -354,22 +624,5 @@ mod tests {
 		let with_tools = Registry::with_tools(vec![VirtualToolDef::new("tool1", "t", "t1")]);
 		assert!(!with_tools.is_empty());
 		assert_eq!(with_tools.len(), 1);
-	}
-
-	#[test]
-	fn test_serialize_registry() {
-		let tool = VirtualToolDef::new("get_weather", "weather", "fetch_weather")
-			.with_description("Get weather");
-
-		let registry = Registry::with_tools(vec![tool]);
-
-		let json = serde_json::to_string_pretty(&registry).unwrap();
-		assert!(json.contains("get_weather"));
-		assert!(json.contains("fetch_weather"));
-
-		// Round-trip test
-		let parsed: Registry = serde_json::from_str(&json).unwrap();
-		assert_eq!(parsed.tools.len(), 1);
-		assert_eq!(parsed.tools[0].name, "get_weather");
 	}
 }

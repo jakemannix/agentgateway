@@ -33,17 +33,27 @@ use crate::telemetry::trc::TraceParent;
 
 const DELIMITER: &str = "_";
 
-/// Result of resolving a tool call, which may be a virtual tool
+/// Result of resolving a tool call, which may be a virtual tool or composition
 #[derive(Debug, Clone)]
-pub struct ResolvedToolCall {
-	/// The target service/backend to route the call to
-	pub target: String,
-	/// The actual tool name on the backend
-	pub tool_name: String,
-	/// The arguments with defaults injected
-	pub args: serde_json::Value,
-	/// If this was a virtual tool, the original virtual name (for output transformation)
-	pub virtual_name: Option<String>,
+pub enum ResolvedToolCall {
+	/// A tool call that routes to a backend
+	Backend {
+		/// The target service/backend to route the call to
+		target: String,
+		/// The actual tool name on the backend
+		tool_name: String,
+		/// The arguments with defaults injected
+		args: serde_json::Value,
+		/// If this was a virtual tool, the original virtual name (for output transformation)
+		virtual_name: Option<String>,
+	},
+	/// A composition that needs to be executed locally
+	Composition {
+		/// The composition name
+		name: String,
+		/// The arguments
+		args: serde_json::Value,
+	},
 }
 
 fn resource_name(default_target_name: Option<&String>, target: &str, name: &str) -> String {
@@ -101,13 +111,17 @@ impl Relay {
 		self.registry.as_ref()
 	}
 
-	/// Resolve a tool call, handling both virtual and regular tools.
+	/// Resolve a tool call, handling virtual tools, compositions, and regular tools.
 	///
-	/// Returns (target_service, actual_tool_name, transformed_args, is_virtual)
+	/// Returns a ResolvedToolCall which is either:
+	/// - Backend: routes to a backend service
+	/// - Composition: needs local execution via CompositionExecutor
 	///
 	/// For virtual tools, this will:
 	/// - Map the virtual name to the source target and tool
 	/// - Inject default arguments
+	///
+	/// For compositions, this returns the composition name for local execution.
 	///
 	/// For regular tools, this delegates to parse_resource_name.
 	pub fn resolve_tool_call(
@@ -115,38 +129,59 @@ impl Relay {
 		tool_name: &str,
 		args: serde_json::Value,
 	) -> Result<ResolvedToolCall, UpstreamError> {
-		// First, check if this is a virtual tool
+		// First, check if this is a virtual tool or composition
 		if let Some(ref reg) = self.registry {
 			let guard = reg.get();
 			if let Some(ref compiled_registry) = **guard {
-				if let Some(virtual_tool) = compiled_registry.get_tool(tool_name) {
-					// This is a virtual tool - resolve to backend
-					let target = virtual_tool.def.source.target.clone();
-					let backend_tool = virtual_tool.def.source.tool.clone();
+				if let Some(tool) = compiled_registry.get_tool(tool_name) {
+					// Check if this is a composition
+					if tool.is_composition() {
+						return Ok(ResolvedToolCall::Composition {
+							name: tool_name.to_string(),
+							args,
+						});
+					}
 
-					// Inject defaults
-					let transformed_args = virtual_tool
-						.inject_defaults(args)
-						.map_err(|e| UpstreamError::InvalidRequest(e.to_string()))?;
+					// This is a source-based virtual tool - resolve to backend
+					if let Some(source_info) = tool.source_info() {
+						let target = source_info.source.target.clone();
+						let backend_tool = source_info.source.tool.clone();
 
-					return Ok(ResolvedToolCall {
-						target,
-						tool_name: backend_tool,
-						args: transformed_args,
-						virtual_name: Some(tool_name.to_string()),
-					});
+						// Inject defaults
+						let transformed_args = tool
+							.inject_defaults(args)
+							.map_err(|e| UpstreamError::InvalidRequest(e.to_string()))?;
+
+						return Ok(ResolvedToolCall::Backend {
+							target,
+							tool_name: backend_tool,
+							args: transformed_args,
+							virtual_name: Some(tool_name.to_string()),
+						});
+					}
 				}
 			}
 		}
 
-		// Not a virtual tool - parse normally
+		// Not a virtual tool or composition - parse normally
 		let (service_name, actual_tool) = self.parse_resource_name(tool_name)?;
-		Ok(ResolvedToolCall {
+		Ok(ResolvedToolCall::Backend {
 			target: service_name.to_string(),
 			tool_name: actual_tool.to_string(),
 			args,
 			virtual_name: None,
 		})
+	}
+
+	/// Check if a tool is a composition
+	pub fn is_composition(&self, tool_name: &str) -> bool {
+		if let Some(ref reg) = self.registry {
+			let guard = reg.get();
+			if let Some(ref compiled_registry) = **guard {
+				return compiled_registry.is_composition(tool_name);
+			}
+		}
+		false
 	}
 
 	/// Transform tool output for virtual tools

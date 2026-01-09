@@ -41,6 +41,18 @@ pub enum RegistryError {
 
 	#[error("compilation error: {0}")]
 	CompilationError(String),
+
+	#[error("duplicate tool name: '{0}'")]
+	DuplicateToolName(String),
+
+	#[error("reference depth exceeded for tool '{0}' (possible circular reference)")]
+	ReferenceDepthExceeded(String),
+
+	#[error("tool '{0}' is a composition and requires the executor (cannot use prepare_call_args)")]
+	CompositionRequiresExecutor(String),
+
+	#[error("unknown tool reference: '{0}'")]
+	UnknownToolReference(String),
 }
 
 impl RegistryError {
