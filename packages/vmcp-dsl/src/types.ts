@@ -43,11 +43,21 @@ export interface SourceTool {
 
 /** Pattern specification - one of the supported patterns */
 export type PatternSpec =
+  // Stateless patterns (implemented)
   | { pipeline: PipelineSpec }
   | { scatterGather: ScatterGatherSpec }
   | { filter: FilterSpec }
   | { schemaMap: SchemaMapSpec }
-  | { mapEach: MapEachSpec };
+  | { mapEach: MapEachSpec }
+  // Stateful patterns (IR defined, runtime not yet implemented)
+  | { retry: RetrySpec }
+  | { timeout: TimeoutSpec }
+  | { cache: CacheSpec }
+  | { idempotent: IdempotentSpec }
+  | { circuitBreaker: CircuitBreakerSpec }
+  | { deadLetter: DeadLetterSpec }
+  | { saga: SagaSpec }
+  | { claimCheck: ClaimCheckSpec };
 
 /** Pipeline pattern - sequential execution */
 export interface PipelineSpec {
@@ -183,6 +193,117 @@ export type MapEachInner =
   | { pattern: PatternSpec };
 
 // =============================================================================
+// Stateful Pattern Specifications
+// =============================================================================
+
+/** Retry pattern - retry with backoff on failure */
+export interface RetrySpec {
+  inner: StepOperation;
+  maxAttempts: number;
+  backoff: BackoffStrategy;
+  retryIf?: FieldPredicate;
+  jitter?: number;
+  attemptTimeoutMs?: number;
+}
+
+export type BackoffStrategy =
+  | { fixed: FixedBackoff }
+  | { exponential: ExponentialBackoff }
+  | { linear: LinearBackoff };
+
+export interface FixedBackoff {
+  delayMs: number;
+}
+
+export interface ExponentialBackoff {
+  initialDelayMs: number;
+  maxDelayMs: number;
+  multiplier?: number;
+}
+
+export interface LinearBackoff {
+  initialDelayMs: number;
+  incrementMs: number;
+  maxDelayMs: number;
+}
+
+/** Timeout pattern - enforce max execution duration */
+export interface TimeoutSpec {
+  inner: StepOperation;
+  durationMs: number;
+  fallback?: StepOperation;
+  message?: string;
+}
+
+/** Cache pattern - read-through caching */
+export interface CacheSpec {
+  keyPaths: string[];
+  inner: StepOperation;
+  store: string;
+  ttlSeconds: number;
+  staleWhileRevalidateSeconds?: number;
+  cacheIf?: FieldPredicate;
+}
+
+/** Idempotent pattern - prevent duplicate processing */
+export interface IdempotentSpec {
+  keyPaths: string[];
+  inner: StepOperation;
+  store: string;
+  ttlSeconds?: number;
+  onDuplicate: OnDuplicate;
+}
+
+export type OnDuplicate = 'cached' | 'skip' | 'error';
+
+/** Circuit breaker pattern - fail fast with recovery */
+export interface CircuitBreakerSpec {
+  name: string;
+  inner: StepOperation;
+  store: string;
+  failureThreshold: number;
+  failureWindowSeconds: number;
+  resetTimeoutSeconds: number;
+  successThreshold?: number;
+  fallback?: StepOperation;
+  failureIf?: FieldPredicate;
+}
+
+/** Dead letter pattern - capture failures */
+export interface DeadLetterSpec {
+  inner: StepOperation;
+  deadLetterTool: string;
+  maxAttempts?: number;
+  backoff?: BackoffStrategy;
+  rethrow?: boolean;
+}
+
+/** Saga pattern - distributed transaction with compensation */
+export interface SagaSpec {
+  steps: SagaStep[];
+  store?: string;
+  sagaIdPath?: string;
+  timeoutMs?: number;
+  output?: DataBinding;
+}
+
+export interface SagaStep {
+  id: string;
+  name: string;
+  action: StepOperation;
+  compensate?: StepOperation;
+  input: DataBinding;
+}
+
+/** Claim check pattern - externalize large payloads */
+export interface ClaimCheckSpec {
+  storeTool: string;
+  retrieveTool: string;
+  inner: StepOperation;
+  retrieveAtEnd?: boolean;
+}
+
+// =============================================================================
 // Output Transform
 // =============================================================================
 
@@ -232,5 +353,38 @@ export function isSchemaMap(spec: PatternSpec): spec is { schemaMap: SchemaMapSp
 
 export function isMapEach(spec: PatternSpec): spec is { mapEach: MapEachSpec } {
   return 'mapEach' in spec;
+}
+
+// Stateful pattern type guards
+export function isRetry(spec: PatternSpec): spec is { retry: RetrySpec } {
+  return 'retry' in spec;
+}
+
+export function isTimeout(spec: PatternSpec): spec is { timeout: TimeoutSpec } {
+  return 'timeout' in spec;
+}
+
+export function isCache(spec: PatternSpec): spec is { cache: CacheSpec } {
+  return 'cache' in spec;
+}
+
+export function isIdempotent(spec: PatternSpec): spec is { idempotent: IdempotentSpec } {
+  return 'idempotent' in spec;
+}
+
+export function isCircuitBreaker(spec: PatternSpec): spec is { circuitBreaker: CircuitBreakerSpec } {
+  return 'circuitBreaker' in spec;
+}
+
+export function isDeadLetter(spec: PatternSpec): spec is { deadLetter: DeadLetterSpec } {
+  return 'deadLetter' in spec;
+}
+
+export function isSaga(spec: PatternSpec): spec is { saga: SagaSpec } {
+  return 'saga' in spec;
+}
+
+export function isClaimCheck(spec: PatternSpec): spec is { claimCheck: ClaimCheckSpec } {
+  return 'claimCheck' in spec;
 }
 
