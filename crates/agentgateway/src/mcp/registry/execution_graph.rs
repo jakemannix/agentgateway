@@ -141,6 +141,7 @@ impl ExecutionGraph {
 	/// Convert a pattern spec to a node operation
 	fn pattern_to_operation(spec: &PatternSpec) -> NodeOperation {
 		match spec {
+			// Stateless patterns - convert to node operations
 			PatternSpec::Pipeline(p) => {
 				let steps = p
 					.steps
@@ -179,6 +180,16 @@ impl ExecutionGraph {
 			PatternSpec::Filter(f) => NodeOperation::Filter(f.clone()),
 			PatternSpec::SchemaMap(sm) => NodeOperation::SchemaMap(sm.clone()),
 			PatternSpec::MapEach(me) => NodeOperation::MapEach { inner: me.inner.clone() },
+
+			// Stateful patterns - wrap as Pattern for now (execution will error at runtime)
+			PatternSpec::Retry(_)
+			| PatternSpec::Timeout(_)
+			| PatternSpec::Cache(_)
+			| PatternSpec::Idempotent(_)
+			| PatternSpec::CircuitBreaker(_)
+			| PatternSpec::DeadLetter(_)
+			| PatternSpec::Saga(_)
+			| PatternSpec::ClaimCheck(_) => NodeOperation::Pattern(Box::new(spec.clone())),
 		}
 	}
 
