@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual Tools, Tool Registry & Tool Algebra | AgentGateway</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+    <style>
+        :root {
+            --r-background-color: #0d1117;
+            --r-main-color: #c9d1d9;
+            --r-heading-color: #58a6ff;
+            --r-link-color: #58a6ff;
+            --r-selection-background-color: #388bfd;
+        }
+        .reveal h1, .reveal h2, .reveal h3 {
+            text-transform: none;
+        }
+        .reveal pre {
+            width: 100%;
+            font-size: 0.55em;
+        }
+        .reveal code {
+            background: #161b22;
+            padding: 0.1em 0.3em;
+            border-radius: 4px;
+        }
+        .reveal pre code {
+            padding: 1em;
+            max-height: 500px;
+        }
+        .reveal .highlight-blue { color: #58a6ff; }
+        .reveal .highlight-green { color: #3fb950; }
+        .reveal .highlight-orange { color: #d29922; }
+        .reveal .highlight-red { color: #f85149; }
+        .reveal .highlight-purple { color: #bc8cff; }
+        .reveal table {
+            font-size: 0.7em;
+        }
+        .reveal table th {
+            background: #21262d;
+        }
+        .reveal table td, .reveal table th {
+            border: 1px solid #30363d;
+            padding: 0.4em 0.6em;
+        }
+        .reveal .two-column {
+            display: flex;
+            gap: 2em;
+        }
+        .reveal .two-column > div {
+            flex: 1;
+        }
+        .reveal .small-text {
+            font-size: 0.7em;
+        }
+        .reveal .diagram-box {
+            background: #161b22;
+            border: 2px solid #30363d;
+            border-radius: 8px;
+            padding: 1em;
+            margin: 0.5em 0;
+        }
+        .reveal .flow-arrow {
+            color: #58a6ff;
+            font-size: 1.2em;
+        }
+        .reveal section.title-slide h1 {
+            font-size: 2.2em;
+        }
+        .reveal section.title-slide h2 {
+            color: #8b949e;
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- Title Slide -->
+            <section class="title-slide" data-background-gradient="linear-gradient(135deg, #0d1117 0%, #161b22 100%)">
+                <h1>Virtual Tools, Tool Registry<br>& Tool Algebra</h1>
+                <h2>Composable MCP Tool Orchestration in AgentGateway</h2>
+                <p style="margin-top: 2em; color: #8b949e;">
+                    <small>AgentGateway • Open Source Data Plane for Agentic AI</small>
+                </p>
+            </section>
+
+            <!-- Agenda -->
+            <section>
+                <h2>Agenda</h2>
+                <ol>
+                    <li class="fragment"><span class="highlight-red">The Problem</span> — Context Window Bloat</li>
+                    <li class="fragment"><span class="highlight-blue">Virtual Tools</span> — 1:1 Tool Adaptation</li>
+                    <li class="fragment"><span class="highlight-green">Tool Registry</span> — Centralized Tool Catalog</li>
+                    <li class="fragment"><span class="highlight-purple">Tool Algebra</span> — Compositional Patterns</li>
+                    <li class="fragment"><span class="highlight-orange">Future</span> — Stateful Patterns</li>
+                </ol>
+            </section>
+
+            <!-- Part 1: The Problem -->
+            <section>
+                <section>
+                    <h2 class="highlight-red">Part 1: The Problem</h2>
+                    <h3>Context Window Bloat</h3>
+                </section>
+
+                <section>
+                    <h3>The Token Budget Crisis</h3>
+                    <div class="two-column">
+                        <div>
+                            <h4 class="highlight-orange">Without Virtual Tools</h4>
+                            <ul class="small-text">
+                                <li>500-word tool description</li>
+                                <li>20-field input schema</li>
+                                <li>50-field output response</li>
+                                <li>~2000 tokens per tool</li>
+                            </ul>
+                        </div>
+                        <div class="fragment">
+                            <h4 class="highlight-green">With Virtual Tools</h4>
+                            <ul class="small-text">
+                                <li>Task-specific description</li>
+                                <li>2-parameter input</li>
+                                <li>1-field output</li>
+                                <li>~100 tokens per tool</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <p class="fragment" style="margin-top: 1.5em;">
+                        <strong class="highlight-blue">20x reduction</strong> in context overhead
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Real World Example</h3>
+                    <pre><code class="language-plaintext">❌ Primitive Tool (Salesforce):
+   query_contacts(soql: string) → SalesforceContact[]
+   Returns 50+ fields per contact
+   Agent must write SOQL queries
+
+✅ Virtual Tool (Adapted):
+   get_customer_emails(company_name: string) → CustomerEmail[]
+   Returns only { name, email }
+   Simple parameter, task-focused</code></pre>
+                    <p class="fragment">
+                        <span class="highlight-green">Benefits:</span> Simpler input, focused output, ~30 vs ~500 tokens
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Key Insight</h3>
+                    <blockquote style="font-size: 1.1em; border-left: 4px solid #58a6ff; padding-left: 1em;">
+                        "Agents own the token budget.<br>
+                        Virtual tools give developers control over<br>
+                        what enters the LLM context at decision time."
+                    </blockquote>
+                </section>
+            </section>
+
+            <!-- Part 2: Virtual Tools -->
+            <section>
+                <section>
+                    <h2 class="highlight-blue">Part 2: Virtual Tools</h2>
+                    <h3>1:1 Tool Adaptation Layer</h3>
+                </section>
+
+                <section>
+                    <h3>What Are Virtual Tools?</h3>
+                    <p>Virtual tools are <strong>1:1 mappings</strong> that allow:</p>
+                    <ul>
+                        <li class="fragment"><span class="highlight-blue">Renaming</span> — Agent-friendly names</li>
+                        <li class="fragment"><span class="highlight-green">Filtering</span> — Hide unnecessary fields</li>
+                        <li class="fragment"><span class="highlight-orange">Transforming</span> — Reshape input/output</li>
+                        <li class="fragment"><span class="highlight-purple">Defaulting</span> — Inject required parameters</li>
+                    </ul>
+                    <p class="fragment" style="margin-top: 1em; font-style: italic;">
+                        Without reimplementing the backend tool!
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Virtual Tool Definition</h3>
+                    <pre><code class="language-rust">pub struct VirtualToolDef {
+    pub name: String,           // Exposed name to agents
+    pub source: ToolSource,     // Backend reference
+    pub description: Option&lt;String&gt;,    // Override description
+    pub input_schema: Option&lt;Value&gt;,    // Override schema
+    pub defaults: HashMap&lt;String, String&gt;, // Inject defaults
+    pub hide_fields: Vec&lt;String&gt;,       // Remove from schema
+    pub output_schema: Option&lt;OutputSchema&gt;, // Transform output
+}</code></pre>
+                </section>
+
+                <section>
+                    <h3>Three Key Transformations</h3>
+                    <div class="diagram-box">
+                        <p><span class="highlight-blue">1. Input Transform</span></p>
+                        <p class="small-text">Rename & simplify inputs<br>
+                        <code>company_name</code> → <code>SELECT ... WHERE Account.Name = ?</code></p>
+                    </div>
+                    <div class="diagram-box fragment">
+                        <p><span class="highlight-green">2. Default Injection</span></p>
+                        <p class="small-text">Inject required parameters<br>
+                        Supports <code>${ENV_VAR}</code> substitution</p>
+                    </div>
+                    <div class="diagram-box fragment">
+                        <p><span class="highlight-orange">3. Output Transform</span></p>
+                        <p class="small-text">Filter & reshape results with JSONPath<br>
+                        80-field response → 3-field summary</p>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>YAML Configuration</h3>
+                    <pre><code class="language-yaml">tools:
+  - name: get_weather
+    source:
+      target: weather-service
+      tool: fetch_weather
+    description: "Get current weather for a city"
+    defaults:
+      api_key: "${WEATHER_API_KEY}"
+      units: "metric"
+    hideFields:
+      - debug_mode
+      - raw_output
+    outputSchema:
+      properties:
+        temperature:
+          sourceField: "$.data.current.temp_f"
+        condition:
+          sourceField: "$.data.current.condition.text"</code></pre>
+                </section>
+            </section>
+
+            <!-- Part 3: Tool Registry -->
+            <section>
+                <section>
+                    <h2 class="highlight-green">Part 3: Tool Registry</h2>
+                    <h3>Centralized Tool Catalog</h3>
+                </section>
+
+                <section>
+                    <h3>What Is The Tool Registry?</h3>
+                    <p>A centralized catalog that:</p>
+                    <ul>
+                        <li class="fragment">Registers <span class="highlight-blue">primitive</span> (backend) and <span class="highlight-purple">virtual</span> (composed) tools</li>
+                        <li class="fragment">Provides <span class="highlight-green">discovery</span> with schema introspection</li>
+                        <li class="fragment">Supports <span class="highlight-orange">hot-reload</span> from file or HTTP</li>
+                        <li class="fragment">Acts as <strong>source of truth</strong> for tool metadata</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3>Registry Architecture</h3>
+                    <pre><code class="language-plaintext">┌─────────────┐
+│   Agents    │  Query for available tools
+└──────┬──────┘
+       │
+       ├──→ MCP Registry ───────────────────┐
+       │    - Discovery                      │
+       │    - Schema introspection           │
+       │    - Health monitoring              │
+       │                                     │
+       └──→ Invokes tools directly ◄────────┘
+            (MCP servers or vMCP servers)</code></pre>
+                </section>
+
+                <section>
+                    <h3>Request Flow: ListTools</h3>
+                    <div class="diagram-box">
+                        <p class="small-text">
+                            <span class="highlight-blue">1.</span> Agent requests available tools<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-green">2.</span> Registry fetches raw tools from backend<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-orange">3.</span> Transforms: new name, schema, hidden fields<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-purple">4.</span> Returns virtual tool list to agent
+                        </p>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Request Flow: CallTool</h3>
+                    <div class="diagram-box">
+                        <p class="small-text">
+                            <span class="highlight-blue">1.</span> Agent calls virtual tool by name<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-green">2.</span> Registry resolves to backend tool + target<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-orange">3.</span> Injects defaults into arguments<br>
+                            <span class="flow-arrow">↓</span><br>
+                            <span class="highlight-purple">4.</span> Calls backend → transforms output → returns
+                        </p>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Hot-Reload Mechanism</h3>
+                    <pre><code class="language-rust">pub struct RegistryStore {
+    registry: ArcSwap&lt;CompiledRegistry&gt;,
+}
+
+impl RegistryStore {
+    // Atomic registry replacement
+    // Readers see updates without blocking
+    pub fn update(&self, new_registry: CompiledRegistry) {
+        self.registry.store(Arc::new(new_registry));
+    }
+}</code></pre>
+                    <p class="fragment small-text">
+                        <span class="highlight-green">File source:</span> File watcher triggers on change<br>
+                        <span class="highlight-blue">HTTP source:</span> Background refresh on interval
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Registry Configuration</h3>
+                    <pre><code class="language-yaml"># From file
+registry:
+  source: file:///path/to/registry.json
+  refreshInterval: 30s
+
+# From HTTP
+registry:
+  source: http://registry.corp.com/api/v1/tools
+  refreshInterval: 5m
+  auth:
+    bearer: ${REGISTRY_TOKEN}</code></pre>
+                </section>
+            </section>
+
+            <!-- Part 4: Tool Algebra -->
+            <section>
+                <section>
+                    <h2 class="highlight-purple">Part 4: Tool Algebra</h2>
+                    <h3>Compositional Patterns for MCP</h3>
+                </section>
+
+                <section>
+                    <h3>The Vision</h3>
+                    <blockquote style="font-size: 0.95em; border-left: 4px solid #bc8cff; padding-left: 1em;">
+                        "What if tools composed like functions?<br><br>
+                        <code>compose(scatter_gather, normalize, retry)</code><br><br>
+                        Like Apache Camel's routing algebra,<br>
+                        but for MCP tools."
+                    </blockquote>
+                </section>
+
+                <section>
+                    <h3>Apache Camel Analogy</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Apache Camel</th>
+                                <th>MCP Tool Algebra</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Endpoint (HTTP, JMS)</td>
+                                <td>MCP Server/Tool</td>
+                            </tr>
+                            <tr>
+                                <td>Message</td>
+                                <td>Tool Input/Output (JSON)</td>
+                            </tr>
+                            <tr>
+                                <td>Route</td>
+                                <td>Tool Pipeline/Workflow</td>
+                            </tr>
+                            <tr>
+                                <td>Processor</td>
+                                <td>Tool Result Transformer</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section>
+                    <h3>Stateless Patterns (Implemented)</h3>
+                    <table>
+                        <thead>
+                            <tr><th>Pattern</th><th>Purpose</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td class="highlight-blue">Pipeline</td><td>Sequential execution, output → next input</td></tr>
+                            <tr><td class="highlight-green">Scatter-Gather</td><td>Parallel execution + aggregate results</td></tr>
+                            <tr><td class="highlight-orange">Filter</td><td>Predicate-based filtering</td></tr>
+                            <tr><td class="highlight-purple">SchemaMap</td><td>Field transformation via JSONPath</td></tr>
+                            <tr><td class="highlight-red">MapEach</td><td>Apply operation to array elements</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section>
+                    <h3>Pattern: Pipeline</h3>
+                    <p>Chain tools where output feeds next input</p>
+                    <pre><code class="language-rust">pipeline()
+    .step("search", web_search)
+    .step("extract_urls", extract_urls)
+    .step("fetch_docs", web_fetch)
+    .step("summarize", summarize)</code></pre>
+                    <div class="diagram-box small-text fragment">
+                        <code>query → [search] → [extract] → [fetch] → [summarize] → result</code>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Pattern: Scatter-Gather</h3>
+                    <p>Send same request to multiple tools, aggregate responses</p>
+                    <pre><code class="language-rust">scatter_gather({
+    targets: [web_search, arxiv_search, db_query],
+    aggregation: [flatten, dedupe, sort, limit(10)]
+})</code></pre>
+                    <div class="diagram-box small-text fragment">
+                        <pre>        ┌→ web_search ────┐
+query ──┼→ arxiv_search ──┼→ Merge → Return best
+        └→ db_query ──────┘</pre>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Pattern: Filter</h3>
+                    <p>Keep only elements matching predicate</p>
+                    <pre><code class="language-rust">filter({
+    field: "$.score",
+    op: "gt",
+    value: 0.7
+})
+
+// Result: [item for item in arr if item.score > 0.7]</code></pre>
+                </section>
+
+                <section>
+                    <h3>Pattern: SchemaMap</h3>
+                    <p>Transform fields using JSONPath, literals, templates</p>
+                    <pre><code class="language-rust">schema_map({
+    mappings: {
+        title: { path: "$.paper_title" },
+        author: { coalesce: ["$.author_name", "$.creator"] },
+        url: { literal: "https://arxiv.org" },
+        citation: {
+            template: "{author} ({year})",
+            vars: { author: "$.author", year: "$.pub_year" }
+        }
+    }
+})</code></pre>
+                </section>
+
+                <section>
+                    <h3>Pattern: MapEach</h3>
+                    <p>Apply operation to each element of an array</p>
+                    <pre><code class="language-rust">map_each({
+    tool: fetch_document
+})
+
+// For [doc_id_1, doc_id_2, ...]:
+// → [fetch_document(doc_id_1), fetch_document(doc_id_2), ...]</code></pre>
+                </section>
+
+                <section>
+                    <h3>Combining Patterns</h3>
+                    <pre><code class="language-rust">// Multi-source research pipeline
+pipeline()
+    .step("search", scatter_gather({
+        targets: [web_search, arxiv_search],
+        aggregation: [flatten, dedupe]
+    }))
+    .step("filter", filter({
+        field: "$.relevance",
+        op: "gt",
+        value: 0.5
+    }))
+    .step("enrich", map_each({ tool: fetch_metadata }))
+    .step("format", schema_map({
+        mappings: {
+            title: { path: "$.title" },
+            summary: { path: "$.abstract" }
+        }
+    }))</code></pre>
+                </section>
+            </section>
+
+            <!-- Part 5: Future - Stateful Patterns -->
+            <section>
+                <section>
+                    <h2 class="highlight-orange">Part 5: Future</h2>
+                    <h3>Stateful Patterns</h3>
+                </section>
+
+                <section>
+                    <h3>Stateful Patterns (Defined, Not Yet Implemented)</h3>
+                    <table style="font-size: 0.65em;">
+                        <thead>
+                            <tr><th>Pattern</th><th>Purpose</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td class="highlight-blue">Retry</td><td>Exponential backoff on failure</td></tr>
+                            <tr><td class="highlight-green">Timeout</td><td>Enforce maximum duration</td></tr>
+                            <tr><td class="highlight-orange">Cache</td><td>Read-through caching with TTL</td></tr>
+                            <tr><td class="highlight-purple">Idempotent</td><td>Prevent duplicate processing</td></tr>
+                            <tr><td class="highlight-red">CircuitBreaker</td><td>Fail fast when dependency failing</td></tr>
+                            <tr><td class="highlight-blue">DeadLetter</td><td>Capture failures for reprocessing</td></tr>
+                            <tr><td class="highlight-green">Saga</td><td>Distributed transactions with compensation</td></tr>
+                            <tr><td class="highlight-orange">ClaimCheck</td><td>Externalize large payloads</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section>
+                    <h3>Retry Pattern</h3>
+                    <pre><code class="language-rust">retry({
+    maxAttempts: 3,
+    backoff: exponential(100ms, 5s, multiplier: 2),
+    retryOn: [RateLimited, Timeout, ServerError]
+})</code></pre>
+                    <p class="small-text fragment">
+                        Requires: Backoff calculation, jitter, conditional retry logic
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Circuit Breaker Pattern</h3>
+                    <pre><code class="language-rust">circuit_breaker({
+    failureThreshold: 5,
+    resetTimeout: 30s,
+    fallback: local_cache
+})</code></pre>
+                    <div class="diagram-box small-text fragment">
+                        <pre>State Machine:
+CLOSED → (5 failures) → OPEN → (30s) → HALF_OPEN → (success) → CLOSED
+                                      ↓ (failure)
+                                     OPEN</pre>
+                    </div>
+                </section>
+
+                <section>
+                    <h3>Cache Pattern</h3>
+                    <pre><code class="language-rust">cache({
+    key: [$.query, $.filters.category],
+    ttl: 15m,
+    staleWhileRevalidate: 5m,
+    store: redis
+})</code></pre>
+                    <p class="small-text fragment">
+                        Requires: State store (Redis, memory), TTL management
+                    </p>
+                </section>
+
+                <section>
+                    <h3>Saga Pattern</h3>
+                    <p>Distributed transactions with compensation</p>
+                    <pre><code class="language-rust">saga({
+    steps: [
+        { action: reserve_inventory, compensate: release_inventory },
+        { action: charge_payment, compensate: refund },
+        { action: ship, compensate: cancel_ship }
+    ]
+})
+
+// On failure at step N:
+// Execute compensate[N-1], compensate[N-2], ... compensate[0]</code></pre>
+                </section>
+            </section>
+
+            <!-- MCP-Specific Patterns -->
+            <section>
+                <section>
+                    <h2>MCP-Specific Patterns</h2>
+                    <h3>Beyond Apache Camel</h3>
+                </section>
+
+                <section>
+                    <h3>Specialized Patterns</h3>
+                    <ul>
+                        <li class="fragment">
+                            <span class="highlight-blue">Tool Adapter</span> — 1:1 transform: rename, redescribe, reshape
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-green">Schema Mediator</span> — Transform between incompatible schemas (LLM-assisted)
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-orange">Capability Router</span> — Route based on tool capabilities dynamically
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-purple">Semantic Deduplicator</span> — Merge by semantic similarity
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-red">Confidence Aggregator</span> — Weight results by source reliability
+                        </li>
+                    </ul>
+                </section>
+            </section>
+
+            <!-- TypeScript DSL -->
+            <section>
+                <section>
+                    <h2>TypeScript DSL</h2>
+                    <h3>Type-Safe Tool Definition</h3>
+                </section>
+
+                <section>
+                    <h3>DSL Example</h3>
+                    <pre><code class="language-typescript">import { tool, pipeline, filter, compile } from '@vmcp/dsl';
+
+const weatherTool = tool('get_weather')
+    .description('Get weather information')
+    .source('weather', 'fetch_weather')
+    .default('units', 'metric')
+    .hideFields(['debug_mode'])
+    .build();
+
+const researchPipeline = tool('research')
+    .description('Multi-source research')
+    .composition(
+        pipeline()
+            .step('search', 'web_search')
+            .step('filter', filter().field('$.score').gt(0.5).build())
+            .step('summarize', 'summarize_text')
+            .build()
+    )
+    .build();
+
+// Compile to JSON IR
+const json = compile(weatherTool, researchPipeline);</code></pre>
+                </section>
+
+                <section>
+                    <h3>Compilation Pipeline</h3>
+                    <div class="diagram-box">
+                        <pre>TypeScript DSL
+      ↓
+  JSON IR (Intermediate Representation)
+      ↓
+  Protobuf (Wire Format)
+      ↓
+  Rust Runtime Types</pre>
+                    </div>
+                    <p class="small-text fragment">
+                        Enables: editing, validation, multi-language support
+                    </p>
+                </section>
+            </section>
+
+            <!-- Summary -->
+            <section>
+                <section>
+                    <h2>Summary</h2>
+                </section>
+
+                <section>
+                    <h3>Key Takeaways</h3>
+                    <ul>
+                        <li class="fragment">
+                            <span class="highlight-blue">Virtual Tools</span> = 1:1 mappings for context control
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-green">Tool Registry</span> = Centralized catalog with hot-reload
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-purple">Tool Algebra</span> = Compositional patterns (N:1)
+                        </li>
+                        <li class="fragment">
+                            <span class="highlight-orange">Stateless patterns</span> implemented, <span class="highlight-red">stateful</span> IR defined
+                        </li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3>Pattern Summary Table</h3>
+                    <table style="font-size: 0.55em;">
+                        <thead>
+                            <tr>
+                                <th>Pattern</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Pipeline</td><td>Stateless</td><td class="highlight-green">✓ Implemented</td></tr>
+                            <tr><td>Scatter-Gather</td><td>Stateless</td><td class="highlight-green">✓ Implemented</td></tr>
+                            <tr><td>Filter</td><td>Stateless</td><td class="highlight-green">✓ Implemented</td></tr>
+                            <tr><td>SchemaMap</td><td>Stateless</td><td class="highlight-green">✓ Implemented</td></tr>
+                            <tr><td>MapEach</td><td>Stateless</td><td class="highlight-green">✓ Implemented</td></tr>
+                            <tr><td>Retry</td><td>Stateful</td><td class="highlight-orange">⏳ IR Defined</td></tr>
+                            <tr><td>Cache</td><td>Stateful</td><td class="highlight-orange">⏳ IR Defined</td></tr>
+                            <tr><td>CircuitBreaker</td><td>Stateful</td><td class="highlight-orange">⏳ IR Defined</td></tr>
+                            <tr><td>Saga</td><td>Stateful</td><td class="highlight-orange">⏳ IR Defined</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section>
+                    <h3>Learn More</h3>
+                    <ul>
+                        <li><code>docs/mcp-algebra-ala-camel.md</code></li>
+                        <li><code>docs/DESIGN_STATEFUL_PATTERNS.md</code></li>
+                        <li><code>docs/design/registry-integration.md</code></li>
+                        <li><code>crates/agentgateway/src/mcp/registry/</code></li>
+                    </ul>
+                    <p style="margin-top: 2em;">
+                        <a href="https://github.com/agentgateway/agentgateway">github.com/agentgateway/agentgateway</a>
+                    </p>
+                </section>
+
+                <section class="title-slide" data-background-gradient="linear-gradient(135deg, #0d1117 0%, #161b22 100%)">
+                    <h1>Questions?</h1>
+                    <p style="margin-top: 2em; color: #8b949e;">
+                        Thank you!
+                    </p>
+                </section>
+            </section>
+
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/markdown/markdown.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: true,
+            transition: 'slide',
+            backgroundTransition: 'fade',
+            plugins: [ RevealHighlight, RevealNotes, RevealMarkdown ]
+        });
+    </script>
+</body>
+</html>
+</code></pre>
