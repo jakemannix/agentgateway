@@ -313,6 +313,7 @@ mod tests {
 			}),
 			input_schema: None,
 			output_transform: None,
+			output_schema: None,
 			version: None,
 			metadata: Default::default(),
 		};

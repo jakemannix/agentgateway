@@ -316,7 +316,8 @@ impl Session {
 									ctr.params.arguments = Some(obj.clone());
 								}
 
-								self.relay.send_single(r, ctx, &target).await
+								// Use send_single_with_output_transform to apply outputTransform
+								self.relay.send_single_with_output_transform(r, ctx, &target, virtual_name).await
 							},
 							ResolvedToolCall::Composition { name: comp_name, args: comp_args } => {
 								log.non_atomic_mutate(|l| {
@@ -356,15 +357,22 @@ impl Session {
 								));
 
 								// Create the executor and run the composition
+								// Spawn as a separate task to avoid scheduler starvation
 								let executor = CompositionExecutor::new(compiled_registry, tool_invoker);
+								let comp_name_clone = comp_name.clone();
 
-								let result = executor
-									.execute(&comp_name, comp_args)
-									.await
-									.map_err(|e| UpstreamError::InvalidRequest(format!(
-										"Composition execution failed: {}",
-										e
-									)))?;
+								let result = tokio::spawn(async move {
+									executor.execute(&comp_name_clone, comp_args).await
+								})
+								.await
+								.map_err(|e| UpstreamError::InvalidRequest(format!(
+									"Composition task panicked: {}",
+									e
+								)))?
+								.map_err(|e| UpstreamError::InvalidRequest(format!(
+									"Composition execution failed: {}",
+									e
+								)))?;
 
 								// Build a successful MCP CallToolResult response
 								let call_result = rmcp::model::CallToolResult {

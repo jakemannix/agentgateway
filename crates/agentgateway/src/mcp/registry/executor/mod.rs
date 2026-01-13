@@ -6,6 +6,8 @@
 // - Result aggregation and transformation
 // - Tracing and observability
 
+use tracing::debug;
+
 mod context;
 mod filter;
 mod map_each;
@@ -88,6 +90,8 @@ impl CompositionExecutor {
 
 	/// Execute a composition by name
 	pub async fn execute(&self, composition_name: &str, input: Value) -> Result<Value, ExecutionError> {
+		debug!(target: "virtual_tools", composition = %composition_name, "executing composition");
+
 		let tool = self
 			.registry
 			.get_tool(composition_name)
@@ -252,7 +256,7 @@ mod tests {
 	use crate::mcp::registry::patterns::{
 		BackoffStrategy, ExponentialBackoff, PipelineSpec, PipelineStep, RetrySpec, StepOperation, ToolCall,
 	};
-	use crate::mcp::registry::types::{Registry, ToolDefinition, ToolImplementation};
+	use crate::mcp::registry::types::{Registry, ToolDefinition};
 
 	#[tokio::test]
 	async fn test_execute_simple_composition() {

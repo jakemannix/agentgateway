@@ -78,6 +78,10 @@ pub enum DataBinding {
 
 	/// Constant value
 	Constant(serde_json::Value),
+
+	/// Construct an object from multiple bindings
+	/// This enables input schema construction from prior step outputs
+	Construct(ConstructBinding),
 }
 
 impl Default for DataBinding {
@@ -103,6 +107,15 @@ pub struct StepBinding {
 
 	/// JSONPath into step output
 	pub path: String,
+}
+
+/// Construct binding - build an object from multiple bindings
+/// Enables symmetric input construction (like outputTransform does for outputs)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructBinding {
+	/// Field name -> binding that produces the field value
+	pub fields: std::collections::HashMap<String, DataBinding>,
 }
 
 #[cfg(test)]

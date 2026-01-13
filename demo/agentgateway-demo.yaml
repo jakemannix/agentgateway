@@ -55,6 +55,12 @@ binds:
               host: docs.mcp.cloudflare.com
               port: 443
               path: /mcp
+          # Remote servers (OAuth-protected)
+          - name: cloudflare-radar
+            mcp:
+              host: radar.mcp.cloudflare.com
+              port: 443
+              path: /mcp
 
 # Registry for virtual tool mappings
 # This provides tool renaming, output projection, defaults, etc.

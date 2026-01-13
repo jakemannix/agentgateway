@@ -1,147 +1,182 @@
 {
-  "$comment": "MCP Gateway Demo - Full Feature Showcase",
+  "$comment": "Comprehensive Tool Registry - Virtual tools, projections, and compositions",
   "schemaVersion": "1.0",
-
-  "servers": [
-    {
-      "name": "fetch-server",
-      "description": "Web content fetching via mcp-server-fetch",
-      "stdio": {"command": "uvx", "args": ["mcp-server-fetch"]}
-    },
-    {
-      "name": "memory-server",
-      "description": "Knowledge graph storage via server-memory",
-      "stdio": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"]}
-    },
-    {
-      "name": "time-server",
-      "description": "Timezone operations via mcp-server-time",
-      "stdio": {"command": "uvx", "args": ["mcp-server-time"]}
-    },
-    {
-      "name": "github-server",
-      "description": "GitHub API access via server-github",
-      "stdio": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}
-    },
-    {
-      "name": "cloudflare-docs",
-      "description": "Cloudflare documentation search (public)",
-      "url": "https://docs.mcp.cloudflare.com/mcp",
-      "transport": "streamablehttp"
-    },
-    {
-      "name": "cloudflare-radar",
-      "description": "Cloudflare Radar analytics (requires OAuth)",
-      "url": "https://radar.mcp.cloudflare.com/mcp",
-      "transport": "streamablehttp",
-      "auth": "oauth"
-    }
-  ],
-
-  "schemas": {
-    "FetchInput": {
-      "type": "object",
-      "properties": {
-        "url": {"type": "string", "description": "URL to fetch"}
-      },
-      "required": ["url"]
-    },
-    "EntityInput": {
-      "type": "object",
-      "properties": {
-        "entities": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {"type": "string"},
-              "entityType": {"type": "string"},
-              "observations": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["name", "entityType", "observations"]
-          }
-        }
-      },
-      "required": ["entities"]
-    }
-  },
 
   "tools": [
     {
+      "$comment": "=== FETCH SERVER - Web content fetching ===",
       "name": "fetch",
-      "server": "fetch-server",
-      "description": "Original fetch tool from mcp-server-fetch",
-      "inputSchema": {"$ref": "#/schemas/FetchInput"},
-      "version": "2.1.0"
+      "description": "Fetch content from a URL",
+      "source": {"target": "fetch-server", "tool": "fetch"},
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "URL to fetch"},
+          "max_length": {"type": "integer", "description": "Max content length"}
+        },
+        "required": ["url"]
+      }
     },
     {
       "name": "get_webpage",
-      "source": "fetch",
-      "description": "DEMO: Renamed fetch tool - retrieves content from a URL with semantic naming"
+      "description": "Retrieve content from a URL - semantic alias for fetch",
+      "source": {"target": "fetch-server", "tool": "fetch"}
     },
     {
+      "name": "browse",
+      "description": "Browse a website - another semantic alias for fetch",
+      "source": {"target": "fetch-server", "tool": "fetch"}
+    },
+    {
+      "name": "download_page",
+      "description": "Download page content - task-specific alias for fetch",
+      "source": {"target": "fetch-server", "tool": "fetch"}
+    },
+    {
+      "$comment": "=== MEMORY SERVER - Knowledge graph ===",
       "name": "read_graph",
-      "server": "memory-server",
       "description": "Read the entire knowledge graph",
-      "inputSchema": {"type": "object", "properties": {}},
-      "version": "3.0.0"
+      "source": {"target": "memory-server", "tool": "read_graph"},
+      "inputSchema": {"type": "object", "properties": {}}
     },
     {
       "name": "list_entity_names",
-      "source": "read_graph",
-      "description": "DEMO: Projected output - extracts just entity names from knowledge graph",
+      "description": "Get just the names of all entities",
+      "source": {"target": "memory-server", "tool": "read_graph"},
       "inputSchema": {"type": "object", "properties": {}},
       "outputSchema": {
         "type": "object",
         "properties": {
-          "names": {
-            "type": "array",
-            "items": {"type": "string"},
-            "source_field": "$.entities[*].name"
-          }
+          "names": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "names": {"path": "$.entities[*].name"}
+        }
+      }
+    },
+    {
+      "name": "list_entity_types",
+      "description": "Get entity types from the knowledge graph",
+      "source": {"target": "memory-server", "tool": "read_graph"},
+      "inputSchema": {"type": "object", "properties": {}},
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "types": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "types": {"path": "$.entities[*].entityType"}
         }
       }
     },
     {
       "name": "get_connections",
-      "source": "read_graph",
-      "description": "DEMO: RDF-style triple projection from knowledge graph relations",
+      "description": "Get simplified connection info: who connects to whom (RDF-style triples)",
+      "source": {"target": "memory-server", "tool": "read_graph"},
       "inputSchema": {"type": "object", "properties": {}},
       "outputSchema": {
         "type": "object",
         "properties": {
           "connections": {
             "type": "array",
-            "source_field": "$.relations[*]",
             "items": {
               "type": "object",
               "properties": {
-                "subject": {"type": "string", "source_field": "$.from"},
-                "predicate": {"type": "string", "source_field": "$.relationType"},
-                "object": {"type": "string", "source_field": "$.to"}
+                "subject": {"type": "string"},
+                "predicate": {"type": "string"},
+                "object": {"type": "string"}
               }
             }
           }
         }
+      },
+      "outputTransform": {
+        "mappings": {
+          "connections": {"path": "$.relations[*]"},
+          "connections[*].subject": {"path": "$.from"},
+          "connections[*].predicate": {"path": "$.relationType"},
+          "connections[*].object": {"path": "$.to"}
+        }
+      }
+    },
+    {
+      "name": "search_nodes",
+      "description": "Search for nodes in the knowledge graph",
+      "source": {"target": "memory-server", "tool": "search_nodes"},
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "description": "Search query"}
+        },
+        "required": ["query"]
       }
     },
     {
       "name": "create_entities",
-      "server": "memory-server",
       "description": "Create new entities in the knowledge graph",
-      "inputSchema": {"$ref": "#/schemas/EntityInput"},
-      "version": "3.0.0"
+      "source": {"target": "memory-server", "tool": "create_entities"},
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string"},
+                "entityType": {"type": "string"},
+                "observations": {"type": "array", "items": {"type": "string"}}
+              },
+              "required": ["name", "entityType", "observations"]
+            }
+          }
+        },
+        "required": ["entities"]
+      }
     },
     {
       "name": "remember",
-      "source": "create_entities",
-      "description": "DEMO: Simplified alias for storing information in memory"
+      "description": "Simplified alias - store facts in memory",
+      "source": {"target": "memory-server", "tool": "create_entities"}
     },
     {
-      "$comment": "=== TIME SERVER - JSON-in-text extraction demos ===",
+      "name": "create_relations",
+      "description": "Create relations between entities",
+      "source": {"target": "memory-server", "tool": "create_relations"},
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+                "relationType": {"type": "string"}
+              },
+              "required": ["from", "to", "relationType"]
+            }
+          }
+        },
+        "required": ["relations"]
+      }
+    },
+    {
+      "name": "connect",
+      "description": "Simplified alias - create connections between facts",
+      "source": {"target": "memory-server", "tool": "create_relations"}
+    },
+
+    {
+      "$comment": "=== TIME SERVER - Timezone operations ===",
       "name": "get_current_time",
-      "server": "time-server",
-      "description": "Get current time - returns JSON embedded in text (no structuredContent)",
+      "description": "Get current time in a timezone (returns JSON embedded in text)",
+      "source": {"target": "time-server", "tool": "get_current_time"},
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -151,82 +186,128 @@
           }
         },
         "required": ["timezone"]
-      },
-      "version": "0.8.1"
+      }
     },
     {
       "name": "get_time_structured",
-      "source": "get_current_time",
-      "description": "DEMO: JSON extraction - auto-extracts JSON from text into structuredContent",
+      "description": "Get current time with structured output",
+      "source": {"target": "time-server", "tool": "get_current_time"},
       "outputSchema": {
         "type": "object",
         "properties": {
-          "timezone": {"type": "string"},
-          "datetime": {"type": "string"},
-          "day_of_week": {"type": "string"},
-          "is_dst": {"type": "boolean"}
+          "timezone": {"type": "string", "description": "IANA timezone name"},
+          "datetime": {"type": "string", "description": "ISO 8601 datetime with offset"},
+          "day_of_week": {"type": "string", "description": "Day name (e.g., 'Tuesday')"},
+          "is_dst": {"type": "boolean", "description": "Whether daylight saving time is active"}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "timezone": {"path": "$.timezone"},
+          "datetime": {"path": "$.datetime"},
+          "day_of_week": {"path": "$.day_of_week"},
+          "is_dst": {"path": "$.is_dst"}
+        }
+      }
+    },
+    {
+      "name": "what_time_is_it",
+      "description": "Simplified time - extracts and projects to just timezone and day",
+      "source": {"target": "time-server", "tool": "get_current_time"},
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "tz": {"type": "string"},
+          "day": {"type": "string"}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "tz": {"path": "$.timezone"},
+          "day": {"path": "$.day_of_week"}
         }
       }
     },
     {
       "name": "what_day_is_it",
-      "source": "get_current_time",
-      "description": "DEMO: JSON extraction + projection - extracts and projects to just day name",
+      "description": "Just the day name - minimal projection",
+      "source": {"target": "time-server", "tool": "get_current_time"},
       "outputSchema": {
         "type": "object",
         "properties": {
-          "day": {"type": "string", "source_field": "$.day_of_week"}
+          "day": {"type": "string"}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "day": {"path": "$.day_of_week"}
         }
       }
     },
     {
       "name": "convert_time",
-      "server": "time-server",
-      "description": "Convert time between timezones - returns nested JSON in text",
+      "description": "Convert time between timezones",
+      "source": {"target": "time-server", "tool": "convert_time"},
       "inputSchema": {
         "type": "object",
         "properties": {
-          "source_timezone": {"type": "string", "description": "Source timezone"},
+          "source_timezone": {"type": "string", "description": "Source IANA timezone"},
           "time": {"type": "string", "description": "Time in HH:MM format"},
-          "target_timezone": {"type": "string", "description": "Target timezone"}
+          "target_timezone": {"type": "string", "description": "Target IANA timezone"}
         },
         "required": ["source_timezone", "time", "target_timezone"]
-      },
-      "version": "0.8.1"
+      }
     },
     {
-      "name": "timezone_offset",
-      "source": "convert_time",
-      "description": "DEMO: Nested JSON projection - extracts time_difference from nested structure",
+      "name": "convert_timezone_flat",
+      "description": "Timezone conversion with flattened output (extracts nested JSON)",
+      "source": {"target": "time-server", "tool": "convert_time"},
       "outputSchema": {
         "type": "object",
         "properties": {
-          "from_tz": {"type": "string", "source_field": "$.source.timezone"},
-          "to_tz": {"type": "string", "source_field": "$.target.timezone"},
-          "offset": {"type": "string", "source_field": "$.time_difference"}
+          "from_timezone": {"type": "string"},
+          "from_time": {"type": "string"},
+          "to_timezone": {"type": "string"},
+          "to_time": {"type": "string"},
+          "offset": {"type": "string"}
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "from_timezone": {"path": "$.source.timezone"},
+          "from_time": {"path": "$.source.datetime"},
+          "to_timezone": {"path": "$.target.timezone"},
+          "to_time": {"path": "$.target.datetime"},
+          "offset": {"path": "$.time_difference"}
         }
       }
     },
     {
-      "$comment": "=== CLOUDFLARE DOCS - Remote MCP server (public, no auth) ===",
-      "name": "search_cloudflare_docs",
-      "server": "cloudflare-docs",
-      "description": "Search Cloudflare documentation - returns XML-like structured results",
-      "inputSchema": {
+      "name": "timezone_offset",
+      "description": "Just the timezone offset info",
+      "source": {"target": "time-server", "tool": "convert_time"},
+      "outputSchema": {
         "type": "object",
         "properties": {
-          "query": {"type": "string", "description": "Search query"}
-        },
-        "required": ["query"]
+          "from_tz": {"type": "string"},
+          "to_tz": {"type": "string"},
+          "offset": {"type": "string"}
+        }
       },
-      "originalName": "search_cloudflare_documentation",
-      "version": "1.2.0"
+      "outputTransform": {
+        "mappings": {
+          "from_tz": {"path": "$.source.timezone"},
+          "to_tz": {"path": "$.target.timezone"},
+          "offset": {"path": "$.time_difference"}
+        }
+      }
     },
+
     {
-      "$comment": "=== GITHUB SERVER - JSON extraction from API responses ===",
+      "$comment": "=== GITHUB SERVER - GitHub API access ===",
       "name": "search_repositories",
-      "server": "github-server",
-      "description": "Search GitHub repositories - returns full JSON response",
+      "description": "Search GitHub repositories",
+      "source": {"target": "github-server", "tool": "search_repositories"},
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -234,87 +315,213 @@
           "perPage": {"type": "number", "description": "Results per page (max 100)"}
         },
         "required": ["query"]
-      },
-      "version": "1.5.2"
+      }
     },
     {
       "name": "search_repos",
-      "source": "search_repositories",
-      "description": "DEMO: GitHub search with clean output - extracts repo names, descriptions, and URLs",
+      "description": "GitHub search with clean output - extracts repo names and stars",
+      "source": {"target": "github-server", "tool": "search_repositories"},
       "outputSchema": {
         "type": "object",
         "properties": {
-          "total": {"type": "integer", "source_field": "$.total_count"},
+          "total": {"type": "integer"},
           "repos": {
             "type": "array",
-            "source_field": "$.items[*]",
             "items": {
               "type": "object",
               "properties": {
-                "name": {"type": "string", "source_field": "$.full_name"},
-                "description": {"type": "string", "source_field": "$.description"},
-                "url": {"type": "string", "source_field": "$.html_url"},
-                "stars": {"type": "integer", "source_field": "$.stargazers_count"}
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "url": {"type": "string"},
+                "stars": {"type": "integer"}
               }
             }
           }
         }
+      },
+      "outputTransform": {
+        "mappings": {
+          "total": {"path": "$.total_count"},
+          "repos": {"path": "$.items[*]"},
+          "repos[*].name": {"path": "$.full_name"},
+          "repos[*].description": {"path": "$.description"},
+          "repos[*].url": {"path": "$.html_url"},
+          "repos[*].stars": {"path": "$.stargazers_count"}
+        }
       }
     },
+
     {
-      "$comment": "=== CLOUDFLARE RADAR - OAuth-protected remote MCP server ===",
-      "name": "get_trending_domains",
-      "server": "cloudflare-radar",
-      "description": "Get trending domains from Cloudflare Radar (requires OAuth)",
+      "$comment": "=== CLOUDFLARE DOCS - Remote MCP server (public) ===",
+      "name": "search_cloudflare_docs",
+      "description": "Search Cloudflare documentation",
+      "source": {"target": "cloudflare-docs", "tool": "search_cloudflare_documentation"},
       "inputSchema": {
         "type": "object",
         "properties": {
-          "limit": {"type": "number", "description": "Number of results (default 10)"},
+          "query": {"type": "string", "description": "Search query"}
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "cf_docs",
+      "description": "Simplified alias for Cloudflare docs search",
+      "source": {"target": "cloudflare-docs", "tool": "search_cloudflare_documentation"}
+    },
+
+    {
+      "$comment": "=== CLOUDFLARE RADAR - OAuth-protected remote MCP server ===",
+      "name": "get_trending_domains",
+      "description": "Get trending domains from Cloudflare Radar (requires OAuth)",
+      "source": {"target": "cloudflare-radar", "tool": "get_domains_ranking"},
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {"type": "integer", "description": "Number of results (default 10)"},
           "rankingType": {
             "type": "string",
             "enum": ["POPULAR", "TRENDING_RISE", "TRENDING_STEADY"],
             "description": "Ranking type"
           }
         }
-      },
-      "originalName": "get_domains_ranking",
-      "version": "2.0.0"
+      }
     },
     {
       "name": "trending_domains",
-      "source": "get_trending_domains",
-      "description": "DEMO: Trending domains with clean output - extracts domain names and rank changes",
+      "description": "Trending domains with clean output - extracts domain names and rank changes",
+      "source": {"target": "cloudflare-radar", "tool": "get_domains_ranking"},
       "outputSchema": {
         "type": "object",
         "properties": {
           "domains": {
             "type": "array",
-            "source_field": "$.result.top_0[*]",
             "items": {
               "type": "object",
               "properties": {
-                "rank": {"type": "integer", "source_field": "$.rank"},
-                "domain": {"type": "string", "source_field": "$.domain"},
-                "change": {"type": "number", "source_field": "$.pctRankChange"}
+                "rank": {"type": "integer"},
+                "domain": {"type": "string"},
+                "change": {"type": "number"}
               }
             }
           }
+        }
+      },
+      "outputTransform": {
+        "mappings": {
+          "domains": {"path": "$.result.top_0[*]"},
+          "domains[*].rank": {"path": "$.rank"},
+          "domains[*].domain": {"path": "$.domain"},
+          "domains[*].change": {"path": "$.pctRankChange"}
         }
       }
     },
     {
       "name": "get_ip_info",
-      "server": "cloudflare-radar",
       "description": "Get IP address information from Cloudflare Radar (requires OAuth)",
+      "source": {"target": "cloudflare-radar", "tool": "get_ip_details"},
       "inputSchema": {
         "type": "object",
         "properties": {
           "ip": {"type": "string", "description": "IPv4 or IPv6 address"}
         },
         "required": ["ip"]
+      }
+    },
+    {
+      "name": "ip_lookup",
+      "description": "Simplified IP lookup with projected output",
+      "source": {"target": "cloudflare-radar", "tool": "get_ip_details"},
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ip": {"type": "string"},
+          "asn": {"type": "integer"},
+          "asn_name": {"type": "string"},
+          "location": {"type": "string"}
+        }
       },
-      "originalName": "get_ip_details",
-      "version": "2.0.0"
+      "outputTransform": {
+        "mappings": {
+          "ip": {"path": "$.ip"},
+          "asn": {"path": "$.asn"},
+          "asn_name": {"path": "$.asnName"},
+          "location": {"path": "$.locationAlpha2"}
+        }
+      }
+    },
+
+    {
+      "$comment": "=== COMPOSITIONS - Tool algebra patterns ===",
+      "name": "search_and_fetch",
+      "description": "Pipeline: search GitHub repos, then fetch the top result's page",
+      "spec": {
+        "pipeline": {
+          "steps": [
+            {
+              "id": "search",
+              "operation": {"tool": {"name": "search_repos"}}
+            },
+            {
+              "id": "fetch_top",
+              "operation": {"tool": {"name": "fetch"}},
+              "input": {
+                "construct": {
+                  "fields": {
+                    "url": {"step": {"stepId": "search", "path": "$.repos[0].url"}}
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "description": "GitHub search query"},
+          "perPage": {"type": "number", "description": "Number of results (default 10)"}
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "fetch_and_remember",
+      "description": "Pipeline: fetch a URL, then store a note about it in the knowledge graph",
+      "spec": {
+        "pipeline": {
+          "steps": [
+            {
+              "id": "fetch_content",
+              "operation": {"tool": {"name": "fetch"}}
+            },
+            {
+              "id": "store_note",
+              "operation": {"tool": {"name": "create_entities"}},
+              "input": {
+                "construct": {
+                  "fields": {
+                    "entities": {
+                      "constant": [{
+                        "name": "fetched_page",
+                        "entityType": "webpage",
+                        "observations": ["Page was fetched via pipeline"]
+                      }]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "URL to fetch"}
+        },
+        "required": ["url"]
+      }
     }
   ]
 }

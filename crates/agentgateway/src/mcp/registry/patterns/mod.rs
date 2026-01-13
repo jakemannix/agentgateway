@@ -12,7 +12,7 @@ mod stateful;
 
 pub use filter::{FieldPredicate, FilterSpec, PredicateValue};
 pub use map_each::{MapEachInner, MapEachSpec};
-pub use pipeline::{DataBinding, InputBinding, PipelineSpec, PipelineStep, StepBinding, StepOperation, ToolCall};
+pub use pipeline::{ConstructBinding, DataBinding, InputBinding, PipelineSpec, PipelineStep, StepBinding, StepOperation, ToolCall};
 pub use scatter_gather::{
 	AggregationOp, AggregationStrategy, DedupeOp, LimitOp, ScatterGatherSpec, ScatterTarget, SortOp,
 };

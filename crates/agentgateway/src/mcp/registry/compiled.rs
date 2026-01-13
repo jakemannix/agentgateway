@@ -11,9 +11,9 @@ use rmcp::model::Tool;
 use serde_json_path::JsonPath;
 
 use super::error::RegistryError;
-use super::patterns::{FieldSource, LiteralValue, PatternSpec};
+use super::patterns::{FieldSource, PatternSpec};
 use super::types::{
-	OutputSchema, OutputTransform, Registry, SourceTool, ToolDefinition, ToolImplementation,
+	OutputTransform, Registry, SourceTool, ToolDefinition, ToolImplementation,
 	VirtualToolDef,
 };
 
@@ -220,6 +220,13 @@ impl CompiledRegistry {
 		// Add compositions as synthetic tools
 		for (name, compiled) in &self.tools_by_name {
 			if compiled.is_composition() {
+				let output_schema = compiled
+					.def
+					.output_schema
+					.as_ref()
+					.and_then(|v| v.as_object().cloned())
+					.map(Arc::new);
+
 				let composition_tool = Tool {
 					name: Cow::Owned(name.clone()),
 					title: None,
@@ -232,7 +239,7 @@ impl CompiledRegistry {
 							.and_then(|v| v.as_object().cloned())
 							.unwrap_or_default(),
 					),
-					output_schema: None,
+					output_schema,
 					annotations: None,
 					icons: None,
 					meta: None,
@@ -393,12 +400,21 @@ impl CompiledTool {
 	pub fn create_virtual_tool(&self, source: &Tool) -> Option<Tool> {
 		let source_tool = self.source_info()?;
 
+		// Convert registry output_schema (Value) to Arc<Map> format if present
+		let output_schema = self
+			.def
+			.output_schema
+			.as_ref()
+			.and_then(|v| v.as_object().cloned())
+			.map(Arc::new)
+			.or_else(|| source.output_schema.clone());
+
 		Some(Tool {
 			name: Cow::Owned(self.def.name.clone()),
 			title: source.title.clone(),
 			description: self.def.description.clone().map(Cow::Owned).or_else(|| source.description.clone()),
 			input_schema: self.compute_effective_schema(source, source_tool),
-			output_schema: source.output_schema.clone(),
+			output_schema,
 			annotations: source.annotations.clone(),
 			icons: source.icons.clone(),
 			meta: source.meta.clone(),
@@ -524,12 +540,62 @@ impl CompiledOutputTransform {
 	}
 
 	/// Apply the transform to a JSON value
+	///
+	/// Handles array item mappings like `repos[*].name` which project fields onto array items.
 	pub fn apply(&self, input: &serde_json::Value) -> Result<serde_json::Value, RegistryError> {
 		let mut result = serde_json::Map::new();
 
+		// Separate base fields from array item mappings (e.g., "repos" vs "repos[*].name")
+		let mut base_fields: HashMap<&str, &CompiledFieldSource> = HashMap::new();
+		let mut array_item_mappings: HashMap<&str, Vec<(&str, &CompiledFieldSource)>> = HashMap::new();
+
 		for (field_name, field_source) in &self.fields {
+			if let Some(bracket_pos) = field_name.find("[*].") {
+				// This is an array item mapping like "repos[*].name"
+				let base_array = &field_name[..bracket_pos];
+				let item_field = &field_name[bracket_pos + 4..]; // Skip "[*]."
+				array_item_mappings.entry(base_array).or_default().push((item_field, field_source));
+			} else {
+				base_fields.insert(field_name.as_str(), field_source);
+			}
+		}
+
+		// Process base fields first
+		for (field_name, field_source) in &base_fields {
 			let value = field_source.extract(input)?;
-			result.insert(field_name.clone(), value);
+
+			// Check if this base field has array item mappings
+			if let Some(item_mappings) = array_item_mappings.get(*field_name) {
+				// Transform each item in the array
+				if let serde_json::Value::Array(items) = value {
+					let transformed: Result<Vec<serde_json::Value>, RegistryError> = items
+						.iter()
+						.map(|item| {
+							let mut obj = serde_json::Map::new();
+							for (item_field_name, item_field_source) in item_mappings {
+								let item_value = item_field_source.extract(item)?;
+								obj.insert((*item_field_name).to_string(), item_value);
+							}
+							Ok(serde_json::Value::Object(obj))
+						})
+						.collect();
+					result.insert((*field_name).to_string(), serde_json::Value::Array(transformed?));
+				} else {
+					// Not an array, just insert as-is
+					result.insert((*field_name).to_string(), value);
+				}
+			} else {
+				result.insert((*field_name).to_string(), value);
+			}
+		}
+
+		// Handle array item mappings for arrays that weren't explicitly defined as base fields
+		// (this would be an error case, but handle gracefully)
+		for (base_array, _) in &array_item_mappings {
+			if !base_fields.contains_key(*base_array) && !result.contains_key(*base_array) {
+				// Array item mappings without a base array definition - skip with null
+				result.insert((*base_array).to_string(), serde_json::Value::Null);
+			}
 		}
 
 		Ok(serde_json::Value::Object(result))
@@ -1047,6 +1113,66 @@ mod tests {
 		let result = compiled.transform_output(response.clone()).unwrap();
 
 		assert_eq!(result, response);
+	}
+
+	#[test]
+	fn test_output_transform_array_item_mapping() {
+		// Test the repos[*].name pattern for transforming array items
+		let json = r#"{
+			"name": "search_repos",
+			"source": { "target": "github", "tool": "search_repositories" },
+			"outputTransform": {
+				"mappings": {
+					"total": { "path": "$.total_count" },
+					"repos": { "path": "$.items[*]" },
+					"repos[*].name": { "path": "$.full_name" },
+					"repos[*].stars": { "path": "$.stargazers_count" },
+					"repos[*].url": { "path": "$.html_url" }
+				}
+			}
+		}"#;
+
+		let def: ToolDefinition = serde_json::from_str(json).unwrap();
+		let defs = HashMap::new();
+		let compiled = CompiledTool::compile(&def, &defs, 0).unwrap();
+
+		let response = json!({
+			"total_count": 2,
+			"items": [
+				{
+					"full_name": "owner1/repo1",
+					"stargazers_count": 100,
+					"html_url": "https://github.com/owner1/repo1",
+					"extra_field": "ignored"
+				},
+				{
+					"full_name": "owner2/repo2",
+					"stargazers_count": 200,
+					"html_url": "https://github.com/owner2/repo2",
+					"extra_field": "also_ignored"
+				}
+			]
+		});
+
+		let result = compiled.transform_output(response).unwrap();
+
+		// Verify total is extracted
+		assert_eq!(result["total"], 2);
+
+		// Verify repos is an array of transformed items
+		let repos = result["repos"].as_array().unwrap();
+		assert_eq!(repos.len(), 2);
+
+		// Verify first item has only the mapped fields
+		assert_eq!(repos[0]["name"], "owner1/repo1");
+		assert_eq!(repos[0]["stars"], 100);
+		assert_eq!(repos[0]["url"], "https://github.com/owner1/repo1");
+		assert!(repos[0].get("extra_field").is_none());
+		assert!(repos[0].get("full_name").is_none()); // Should be renamed to "name"
+
+		// Verify second item
+		assert_eq!(repos[1]["name"], "owner2/repo2");
+		assert_eq!(repos[1]["stars"], 200);
 	}
 
 	#[test]

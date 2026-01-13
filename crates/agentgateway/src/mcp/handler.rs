@@ -252,7 +252,8 @@ impl Relay {
 			arguments: args.as_object().cloned(),
 		};
 
-		let request_id = RequestId::Number(rand::random::<i64>().abs());
+		// Use i32 to avoid floating-point precision issues when JSON serializes large numbers
+		let request_id = RequestId::Number(rand::random::<i32>().abs() as i64);
 
 		// Create a proper JsonRpcRequest using rmcp's types
 		let call_tool_request = rmcp::model::CallToolRequest {
@@ -278,11 +279,31 @@ impl Relay {
 		// Extract the result from the JSON-RPC response
 		match response {
 			ServerJsonRpcMessage::Response(resp) => {
-				// resp.result is a ServerResult, not a Result<>
-				// Convert ServerResult to JSON
-				let json_result = serde_json::to_value(&resp.result)
-					.map_err(|e| UpstreamError::InvalidRequest(format!("Failed to serialize result: {}", e)))?;
-				Ok(json_result)
+				// Extract the actual content from CallToolResult
+				use rmcp::model::ServerResult;
+				match resp.result {
+					ServerResult::CallToolResult(ctr) => {
+						// Find text content and try to parse as JSON
+						for content in &ctr.content {
+							if let rmcp::model::RawContent::Text(t) = &content.raw {
+								// Try to parse as JSON, fall back to raw text
+								if let Ok(json) = serde_json::from_str::<serde_json::Value>(&t.text) {
+									return Ok(json);
+								} else {
+									// Return as string value if not valid JSON
+									return Ok(serde_json::Value::String(t.text.clone()));
+								}
+							}
+						}
+						// No text content found, return null
+						Ok(serde_json::Value::Null)
+					},
+					other => {
+						// For other result types, serialize as-is
+						serde_json::to_value(&other)
+							.map_err(|e| UpstreamError::InvalidRequest(format!("Failed to serialize result: {}", e)))
+					}
+				}
 			},
 			ServerJsonRpcMessage::Error(err) => {
 				Err(UpstreamError::InvalidRequest(format!("Tool call failed: {}", err.error.message)))
@@ -340,13 +361,9 @@ impl ToolInvoker for RelayToolInvoker {
 				}
 			},
 			ResolvedToolCall::Composition { name, .. } => {
-				// This is a nested composition call - we need to execute it recursively
-				// The CompositionExecutor will handle this through its execute method
-				// For now, return an error indicating recursive composition is not yet supported
-				// TODO: Support nested compositions by passing the executor reference
+				// Nested compositions not yet supported
 				Err(ExecutionError::ToolExecutionFailed(format!(
-					"Nested composition '{}' execution is not yet supported. \
-					Compositions can only call backend tools, not other compositions.",
+					"Nested composition '{}' not supported - compositions can only call backend tools",
 					name
 				)))
 			},
@@ -779,7 +796,7 @@ fn transform_server_message(
 	virtual_name: &str,
 	registry: &RegistryStoreRef,
 ) -> ServerJsonRpcMessage {
-	use rmcp::model::{CallToolResult, ServerResult};
+	use rmcp::model::ServerResult;
 
 	// Only transform response messages
 	let ServerJsonRpcMessage::Response(resp) = msg else {

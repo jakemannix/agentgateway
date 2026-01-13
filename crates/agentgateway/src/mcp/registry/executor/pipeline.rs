@@ -58,6 +58,15 @@ impl PipelineExecutor {
 				Self::apply_jsonpath(&sb.path, &step_result)
 			},
 			DataBinding::Constant(value) => Ok(value.clone()),
+			DataBinding::Construct(cb) => {
+				// Build an object by resolving each field's binding
+				let mut obj = serde_json::Map::new();
+				for (field_name, field_binding) in &cb.fields {
+					let field_value = Box::pin(Self::resolve_binding(field_binding, input, ctx)).await?;
+					obj.insert(field_name.clone(), field_value);
+				}
+				Ok(Value::Object(obj))
+			},
 		}
 	}
 

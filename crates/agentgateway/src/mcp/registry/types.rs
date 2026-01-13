@@ -45,9 +45,13 @@ pub struct ToolDefinition {
 	#[serde(default)]
 	pub input_schema: Option<serde_json::Value>,
 
-	/// Output transformation
+	/// Output transformation (HOW to generate structured output - internal)
 	#[serde(default)]
 	pub output_transform: Option<OutputTransform>,
+
+	/// Output schema (WHAT the output looks like - JSON Schema, sent to MCP clients)
+	#[serde(default)]
+	pub output_schema: Option<serde_json::Value>,
 
 	/// Semantic version of this tool definition
 	#[serde(default)]
@@ -258,6 +262,7 @@ impl ToolDefinition {
 			}),
 			input_schema: None,
 			output_transform: None,
+			output_schema: None,
 			version: None,
 			metadata: HashMap::new(),
 		}
@@ -271,6 +276,7 @@ impl ToolDefinition {
 			implementation: ToolImplementation::Spec(spec),
 			input_schema: None,
 			output_transform: None,
+			output_schema: None,
 			version: None,
 			metadata: HashMap::new(),
 		}
@@ -306,6 +312,7 @@ impl ToolDefinition {
 			}),
 			input_schema: legacy.input_schema,
 			output_transform,
+			output_schema: None,
 			version: legacy.version,
 			metadata: legacy.metadata,
 		}
@@ -320,6 +327,12 @@ impl ToolDefinition {
 	/// Builder: set output transform
 	pub fn with_output_transform(mut self, transform: OutputTransform) -> Self {
 		self.output_transform = Some(transform);
+		self
+	}
+
+	/// Builder: set output schema (JSON Schema sent to MCP clients)
+	pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+		self.output_schema = Some(schema);
 		self
 	}
 

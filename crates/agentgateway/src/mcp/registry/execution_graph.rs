@@ -3,11 +3,9 @@
 // The execution graph is a DAG (Directed Acyclic Graph) representing
 // the flow of data through a composition's operations.
 
-use std::collections::HashMap;
 
 use super::patterns::{
-	AggregationStrategy, DataBinding, FilterSpec, MapEachInner, PatternSpec, PipelineSpec,
-	ScatterGatherSpec, SchemaMapSpec,
+	AggregationStrategy, DataBinding, FilterSpec, MapEachInner, PatternSpec, SchemaMapSpec,
 };
 
 /// An execution graph representing a compiled composition
@@ -255,7 +253,7 @@ impl ExecutionGraph {
 
 #[cfg(test)]
 mod tests {
-	use super::super::patterns::{AggregationOp, PipelineStep, StepOperation, ToolCall};
+	use super::super::patterns::{AggregationOp, AggregationStrategy, PipelineSpec, PipelineStep, ScatterGatherSpec, StepOperation, ToolCall};
 	use super::*;
 
 	#[test]
